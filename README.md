@@ -41,7 +41,7 @@ Compressing the **entire 6.01+ Million Lichess Puzzle Database** down to an ultr
 5. **Rich Queries & Random Sampling**:
    Filter puzzles by rating range, theme bitmasks (supports all 73 Lichess themes), popularity, and minimum plays.
 6. **Built-in Sample Database**:
-   A lightweight `sample_puzzles.lpdb` (10,000 puzzles, ~310 KB) is included in the repository for immediate testing.
+   A lightweight `sample_puzzles.lpdb` (**150,000 puzzles, ~4.26 MB**) is included directly in the repository for immediate testing, benchmarking, and development.
 
 ---
 
