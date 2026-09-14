@@ -1,0 +1,25 @@
+# Rust build artifacts
+/target
+Cargo.lock
+
+# Large binary database files
+*.lpdb
+!sample_puzzles.lpdb
+
+# Source/raw datasets and temporary downloads
+*.db
+*.sqlite
+*.sqlite3
+*.csv
+*.csv.zst
+*.zst
+*.zip
+*.7z
+*.tar.gz
+
+# IDE and OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
