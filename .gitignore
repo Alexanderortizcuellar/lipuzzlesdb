@@ -6,6 +6,9 @@ Cargo.lock
 *.lpdb
 !sample_puzzles.lpdb
 
+# Export files and dataset dumps
+*.pgn
+
 # Source/raw datasets and temporary downloads
 *.db
 *.sqlite
