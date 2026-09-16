@@ -262,4 +262,29 @@ impl PuzzleDatabase {
             themes,
         })
     }
+
+    /// Queries puzzles matching criteria up to a given limit.
+    pub fn query_puzzles(&self, criteria: &QueryCriteria, limit: usize) -> Vec<Puzzle> {
+        self.filter(criteria)
+            .take(limit)
+            .map(|r| {
+                let moves_packed = r.get_moves(self.move_pool);
+                let moves = moves_packed.iter().map(|m| m.to_uci()).collect();
+                let t_id = r.theme_id() as usize;
+                let themes = if t_id < self.theme_dict.len() {
+                    self.theme_dict[t_id].to_theme_names().into_iter().map(String::from).collect()
+                } else {
+                    Vec::new()
+                };
+                Puzzle {
+                    id: r.id_string(),
+                    fen: r.fen_string(),
+                    moves,
+                    rating: r.rating(),
+                    themes,
+                }
+            })
+            .collect()
+    }
 }
+

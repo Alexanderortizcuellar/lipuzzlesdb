@@ -5,12 +5,12 @@ use std::time::Instant;
 use clap::{Parser, Subcommand};
 use lipuzzles::{
     download_lichess_puzzle_db, BlockCompressedDb, BlockDbBuilder, ColumnarBuilderOptions,
-    ColumnarDb, ColumnarDbBuilder, DbBuilder, Puzzle, PuzzleDatabase, QueryCriteria, ThemeMask,
+    ColumnarDb, ColumnarDbBuilder, DbBuilder, Exporter, Puzzle, PuzzleDatabase, QueryCriteria, ThemeMask,
     LPDB_VERSION_V3, LPDB_VERSION_V4,
 };
 
 #[derive(Parser)]
-#[command(name = "lpdb", author = "Antigravity", version = "0.5.0")]
+#[command(name = "lpdb", author = "Antigravity", version = "0.6.0")]
 #[command(about = "High-performance zero-copy chess puzzles database engine", long_about = None)]
 struct Cli {
     #[arg(short, long, global = true, default_value = "puzzles.lpdb")]
@@ -127,6 +127,14 @@ enum Commands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+
+        /// Output as PGN format
+        #[arg(long)]
+        pgn: bool,
+
+        /// Output as CSV format
+        #[arg(long)]
+        csv: bool,
     },
 
     /// Pick random puzzle(s) matching criteria
@@ -150,6 +158,41 @@ enum Commands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+
+        /// Output as PGN format
+        #[arg(long)]
+        pgn: bool,
+    },
+
+    /// Export filtered puzzles to a PGN or CSV file
+    Export {
+        /// Output destination file path (e.g. "puzzles.pgn" or "puzzles.csv")
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Export format: "pgn" or "csv" (defaults to inferring from file extension)
+        #[arg(short, long)]
+        format: Option<String>,
+
+        /// Minimum rating
+        #[arg(long)]
+        min_rating: Option<u16>,
+
+        /// Maximum rating
+        #[arg(long)]
+        max_rating: Option<u16>,
+
+        /// Required themes (comma-separated, e.g. "hangingPiece", "fork,endgame")
+        #[arg(long)]
+        themes: Option<String>,
+
+        /// Any matching themes (comma-separated, e.g. "mateIn1,mateIn2")
+        #[arg(long)]
+        any_themes: Option<String>,
+
+        /// Maximum number of puzzles to export
+        #[arg(short, long)]
+        limit: Option<usize>,
     },
 
     /// Benchmark database performance (mmap, random seek, filtering throughput)
@@ -372,6 +415,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             any_themes,
             limit,
             json,
+            pgn,
+            csv,
         } => {
             let ver = detect_db_version(&cli.db);
             let req_mask = themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
@@ -383,41 +428,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 any_themes: any_mask,
             };
 
-            let mut rng = rand::thread_rng();
-            let mut results = Vec::new();
-
-            if ver == LPDB_VERSION_V4 {
+            let results = if ver == LPDB_VERSION_V4 {
                 let db = ColumnarDb::open(&cli.db)?;
-                for _ in 0..limit {
-                    if let Some(p) = db.random_puzzle(&criteria, &mut rng) {
-                        results.push(p);
-                    }
-                }
+                db.query_puzzles(&criteria, limit)
+            } else if ver == LPDB_VERSION_V3 {
+                let db = BlockCompressedDb::open(&cli.db)?;
+                db.query_puzzles(&criteria, limit)
             } else {
                 let db = PuzzleDatabase::open(&cli.db)?;
-                let matches: Vec<&lipuzzles::PuzzleRecord> = db.filter(&criteria).take(limit).collect();
-                for r in matches {
-                    let moves = r.get_moves(db.move_pool()).iter().map(|m| m.to_uci()).collect();
-                    let t_id = r.theme_id() as usize;
-                    let th = if t_id < db.theme_dict().len() {
-                        db.theme_dict()[t_id].to_theme_names().into_iter().map(String::from).collect()
-                    } else {
-                        Vec::new()
-                    };
-                    results.push(Puzzle {
-                        id: r.id_string(),
-                        fen: r.fen_string(),
-                        moves,
-                        rating: r.rating(),
-                        themes: th,
-                    });
-                }
-            }
+                db.query_puzzles(&criteria, limit)
+            };
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&results)?);
+            } else if pgn {
+                for p in &results {
+                    print!("{}", Exporter::puzzle_to_pgn(p));
+                }
+            } else if csv {
+                print!("PuzzleId,FEN,Moves,Rating,Themes\n");
+                for p in &results {
+                    print!("{}", Exporter::puzzle_to_csv_line(p));
+                }
             } else {
-                for p in results {
+                for p in &results {
                     println!("[{}] Rating: {:4} | Themes: {:<35} | Moves: {}", p.id, p.rating, p.themes.join(", "), p.moves.join(" "));
                 }
             }
@@ -429,6 +463,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             themes,
             count,
             json,
+            pgn,
         } => {
             let ver = detect_db_version(&cli.db);
             let req_mask = themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
@@ -449,6 +484,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         results.push(p);
                     }
                 }
+            } else if ver == LPDB_VERSION_V3 {
+                let db = BlockCompressedDb::open(&cli.db)?;
+                for _ in 0..count {
+                    if let Some(p) = db.random_puzzle(&criteria, &mut rng) {
+                        results.push(p);
+                    }
+                }
             } else {
                 let db = PuzzleDatabase::open(&cli.db)?;
                 for _ in 0..count {
@@ -460,12 +502,79 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&results)?);
+            } else if pgn {
+                for p in &results {
+                    print!("{}", Exporter::puzzle_to_pgn(p));
+                }
             } else {
-                for p in results {
-                    print_puzzle(&p, true);
+                for p in &results {
+                    print_puzzle(p, true);
                 }
             }
         }
+
+        Commands::Export {
+            output,
+            format,
+            min_rating,
+            max_rating,
+            themes,
+            any_themes,
+            limit,
+        } => {
+            let ver = detect_db_version(&cli.db);
+            let req_mask = themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
+            let any_mask = any_themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
+            let criteria = QueryCriteria {
+                min_rating,
+                max_rating,
+                required_themes: req_mask,
+                any_themes: any_mask,
+            };
+
+            let export_limit = limit.unwrap_or(usize::MAX);
+            println!("Exporting puzzles from {:?}...", cli.db);
+            let start = Instant::now();
+
+            let puzzles = if ver == LPDB_VERSION_V4 {
+                let db = ColumnarDb::open(&cli.db)?;
+                db.query_puzzles(&criteria, export_limit)
+            } else if ver == LPDB_VERSION_V3 {
+                let db = BlockCompressedDb::open(&cli.db)?;
+                db.query_puzzles(&criteria, export_limit)
+            } else {
+                let db = PuzzleDatabase::open(&cli.db)?;
+                db.query_puzzles(&criteria, export_limit)
+            };
+
+            let is_csv = match format.as_deref() {
+                Some("csv") | Some("CSV") => true,
+                Some("pgn") | Some("PGN") => false,
+                _ => {
+                    if let Some(ext) = output.extension().and_then(|s| s.to_str()) {
+                        ext.eq_ignore_ascii_case("csv")
+                    } else {
+                        false
+                    }
+                }
+            };
+
+            let exported_count = if is_csv {
+                Exporter::export_to_csv_file(&puzzles, &output)?
+            } else {
+                Exporter::export_to_pgn_file(&puzzles, &output)?
+            };
+
+            let elapsed = start.elapsed();
+            println!(
+                "Successfully exported {} puzzles to {:?} in {:.2}s ({:.2} MB)",
+                exported_count,
+                output,
+                elapsed.as_secs_f64(),
+                std::fs::metadata(&output)?.len() as f64 / (1024.0 * 1024.0)
+            );
+        }
+
 
         Commands::Bench { iterations } => {
             let ver = detect_db_version(&cli.db);

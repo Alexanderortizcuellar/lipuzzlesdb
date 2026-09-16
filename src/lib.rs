@@ -6,6 +6,7 @@ pub mod columnar_builder;
 pub mod columnar_db;
 pub mod db;
 pub mod downloader;
+pub mod exporter;
 pub mod fen;
 pub mod id;
 pub mod moves;
@@ -20,6 +21,7 @@ pub use columnar_builder::{ColumnarBuilderOptions, ColumnarBuilderStats, Columna
 pub use columnar_db::{BlockEntryV4, ColumnarDb, DbHeaderV4, DEFAULT_V4_BLOCK_SIZE, LPDB_VERSION_V4};
 pub use db::{DbHeader, Puzzle, PuzzleDatabase, QueryCriteria};
 pub use downloader::{download_lichess_puzzle_db, LICHESS_PUZZLE_DB_URL};
+pub use exporter::Exporter;
 pub use fen::{FenError, PackedFen};
 pub use id::{decode_base62_id, encode_base62_id};
 pub use moves::{decode_moves, encode_moves, PackedMove};

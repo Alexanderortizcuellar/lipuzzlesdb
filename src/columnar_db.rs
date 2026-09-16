@@ -513,4 +513,52 @@ impl ColumnarDb {
 
         None
     }
+
+    /// Queries puzzles matching criteria up to a given limit.
+    pub fn query_puzzles(&self, criteria: &crate::db::QueryCriteria, limit: usize) -> Vec<crate::db::Puzzle> {
+        let min_r = criteria.min_rating.unwrap_or(self.header.min_rating);
+        let max_r = criteria.max_rating.unwrap_or(self.header.max_rating);
+
+        if min_r > max_r || self.block_index.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+
+        let start_block = self.block_index.partition_point(|b| b.max_rating < min_r);
+        let end_block = self.block_index.partition_point(|b| b.min_rating <= max_r);
+
+        let mut results = Vec::with_capacity(limit);
+
+        for block_idx in start_block..end_block.min(self.block_index.len()) {
+            if let Ok(block) = self.get_block(block_idx) {
+                for i in 0..block.puzzle_count {
+                    let r = block.ratings[i];
+                    if r >= min_r && r <= max_r {
+                        let t_id = block.theme_ids[i] as usize;
+                        let mask = if t_id < self.theme_dict.len() { self.theme_dict[t_id] } else { ThemeMask::EMPTY };
+
+                        if let Some(req) = criteria.required_themes {
+                            if !mask.contains_all(req) {
+                                continue;
+                            }
+                        }
+                        if let Some(any) = criteria.any_themes {
+                            if !mask.contains_any(any) {
+                                continue;
+                            }
+                        }
+
+                        if let Some(p) = block.get_puzzle(i, self.theme_dict) {
+                            results.push(p);
+                            if results.len() >= limit {
+                                return results;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        results
+    }
 }
+
