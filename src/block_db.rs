@@ -360,7 +360,13 @@ impl BlockCompressedDb {
                                 continue;
                             }
                         }
+                        if let Some(excl) = criteria.excluded_themes {
+                            if mask.contains_any(excl) {
+                                continue;
+                            }
+                        }
                         matching_in_block.push(i);
+
                     }
                 }
 
@@ -420,6 +426,12 @@ impl BlockCompressedDb {
                                 continue;
                             }
                         }
+                        if let Some(excl) = criteria.excluded_themes {
+                            if mask.contains_any(excl) {
+                                continue;
+                            }
+                        }
+
 
                         let moves = r.get_moves(&block.moves).iter().map(|m| m.to_uci()).collect();
                         let themes = if t_id < self.theme_dict.len() {

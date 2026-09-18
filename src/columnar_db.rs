@@ -500,7 +500,13 @@ impl ColumnarDb {
                                 continue;
                             }
                         }
+                        if let Some(excl) = criteria.excluded_themes {
+                            if mask.contains_any(excl) {
+                                continue;
+                            }
+                        }
                         matching_in_block.push(i);
+
                     }
                 }
 
@@ -546,6 +552,12 @@ impl ColumnarDb {
                                 continue;
                             }
                         }
+                        if let Some(excl) = criteria.excluded_themes {
+                            if mask.contains_any(excl) {
+                                continue;
+                            }
+                        }
+
 
                         if let Some(p) = block.get_puzzle(i, self.theme_dict) {
                             results.push(p);

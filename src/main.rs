@@ -120,6 +120,10 @@ enum Commands {
         #[arg(long)]
         any_themes: Option<String>,
 
+        /// Exclude themes (comma-separated, e.g. "mate,mateIn1,mateIn2,backRankMate")
+        #[arg(long)]
+        exclude_themes: Option<String>,
+
         /// Maximum number of puzzles to output
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
@@ -150,6 +154,10 @@ enum Commands {
         /// Required themes (comma-separated)
         #[arg(long)]
         themes: Option<String>,
+
+        /// Exclude themes (comma-separated)
+        #[arg(long)]
+        exclude_themes: Option<String>,
 
         /// Number of random puzzles to pick
         #[arg(short, long, default_value_t = 1)]
@@ -190,10 +198,15 @@ enum Commands {
         #[arg(long)]
         any_themes: Option<String>,
 
+        /// Exclude themes (comma-separated, e.g. "mate,mateIn1,mateIn2")
+        #[arg(long)]
+        exclude_themes: Option<String>,
+
         /// Maximum number of puzzles to export
         #[arg(short, long)]
         limit: Option<usize>,
     },
+
 
     /// Benchmark database performance (mmap, random seek, filtering throughput)
     Bench {
@@ -413,6 +426,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_rating,
             themes,
             any_themes,
+            exclude_themes,
             limit,
             json,
             pgn,
@@ -421,11 +435,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let ver = detect_db_version(&cli.db);
             let req_mask = themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
             let any_mask = any_themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
+            let excl_mask = exclude_themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
             let criteria = QueryCriteria {
                 min_rating,
                 max_rating,
                 required_themes: req_mask,
                 any_themes: any_mask,
+                excluded_themes: excl_mask,
             };
 
             let results = if ver == LPDB_VERSION_V4 {
@@ -461,17 +477,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             min_rating,
             max_rating,
             themes,
+            exclude_themes,
             count,
             json,
             pgn,
         } => {
             let ver = detect_db_version(&cli.db);
             let req_mask = themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
+            let excl_mask = exclude_themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
             let criteria = QueryCriteria {
                 min_rating,
                 max_rating,
                 required_themes: req_mask,
                 any_themes: None,
+                excluded_themes: excl_mask,
             };
 
             let mut rng = rand::thread_rng();
@@ -520,17 +539,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_rating,
             themes,
             any_themes,
+            exclude_themes,
             limit,
         } => {
             let ver = detect_db_version(&cli.db);
             let req_mask = themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
             let any_mask = any_themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
+            let excl_mask = exclude_themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
             let criteria = QueryCriteria {
                 min_rating,
                 max_rating,
                 required_themes: req_mask,
                 any_themes: any_mask,
+                excluded_themes: excl_mask,
             };
+
 
             let export_limit = limit.unwrap_or(usize::MAX);
             println!("Exporting puzzles from {:?}...", cli.db);

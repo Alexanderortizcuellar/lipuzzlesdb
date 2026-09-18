@@ -50,7 +50,9 @@ pub struct QueryCriteria {
     pub max_rating: Option<u16>,
     pub required_themes: Option<ThemeMask>,
     pub any_themes: Option<ThemeMask>,
+    pub excluded_themes: Option<ThemeMask>,
 }
+
 
 pub struct PuzzleDatabase {
     _mmap: Mmap,
@@ -234,9 +236,15 @@ impl PuzzleDatabase {
                     return false;
                 }
             }
+            if let Some(excl) = criteria.excluded_themes {
+                if r.has_themes_any(excl, self.theme_dict) {
+                    return false;
+                }
+            }
             true
         })
     }
+
 
     /// Selects a random puzzle matching criteria.
     pub fn random_puzzle<R: Rng>(&self, criteria: &QueryCriteria, rng: &mut R) -> Option<Puzzle> {
