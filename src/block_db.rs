@@ -407,7 +407,7 @@ impl BlockCompressedDb {
         let start_block = self.block_index.partition_point(|b| b.max_rating < min_r);
         let end_block = self.block_index.partition_point(|b| b.min_rating <= max_r);
 
-        let mut results = Vec::with_capacity(limit);
+        let mut results = Vec::with_capacity(limit.min(100_000));
 
         for block_idx in start_block..end_block.min(self.block_index.len()) {
             if let Ok(block) = self.get_block(block_idx) {

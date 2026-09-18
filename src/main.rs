@@ -202,10 +202,15 @@ enum Commands {
         #[arg(long)]
         exclude_themes: Option<String>,
 
+        /// Sample uniformly across the rating range instead of taking only the lowest rating
+        #[arg(long)]
+        sample: bool,
+
         /// Maximum number of puzzles to export
         #[arg(short, long)]
         limit: Option<usize>,
     },
+
 
 
     /// Benchmark database performance (mmap, random seek, filtering throughput)
@@ -540,6 +545,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             themes,
             any_themes,
             exclude_themes,
+            sample,
             limit,
         } => {
             let ver = detect_db_version(&cli.db);
@@ -554,21 +560,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 excluded_themes: excl_mask,
             };
 
-
             let export_limit = limit.unwrap_or(usize::MAX);
             println!("Exporting puzzles from {:?}...", cli.db);
             let start = Instant::now();
 
-            let puzzles = if ver == LPDB_VERSION_V4 {
+            let mut puzzles = if ver == LPDB_VERSION_V4 {
                 let db = ColumnarDb::open(&cli.db)?;
-                db.query_puzzles(&criteria, export_limit)
+                if sample && limit.is_some() {
+                    // Fetch all matching puzzles across the rating range, then sample uniformly
+                    let all = db.query_puzzles(&criteria, usize::MAX);
+                    if all.len() <= export_limit {
+                        all
+                    } else {
+                        let step = all.len() as f64 / export_limit as f64;
+                        (0..export_limit).map(|i| all[(i as f64 * step) as usize].clone()).collect()
+                    }
+                } else {
+                    db.query_puzzles(&criteria, export_limit)
+                }
             } else if ver == LPDB_VERSION_V3 {
                 let db = BlockCompressedDb::open(&cli.db)?;
-                db.query_puzzles(&criteria, export_limit)
+                if sample && limit.is_some() {
+                    let all = db.query_puzzles(&criteria, usize::MAX);
+                    if all.len() <= export_limit {
+                        all
+                    } else {
+                        let step = all.len() as f64 / export_limit as f64;
+                        (0..export_limit).map(|i| all[(i as f64 * step) as usize].clone()).collect()
+                    }
+                } else {
+                    db.query_puzzles(&criteria, export_limit)
+                }
             } else {
                 let db = PuzzleDatabase::open(&cli.db)?;
-                db.query_puzzles(&criteria, export_limit)
+                if sample && limit.is_some() {
+                    let all = db.query_puzzles(&criteria, usize::MAX);
+                    if all.len() <= export_limit {
+                        all
+                    } else {
+                        let step = all.len() as f64 / export_limit as f64;
+                        (0..export_limit).map(|i| all[(i as f64 * step) as usize].clone()).collect()
+                    }
+                } else {
+                    db.query_puzzles(&criteria, export_limit)
+                }
             };
+
 
             let is_csv = match format.as_deref() {
                 Some("csv") | Some("CSV") => true,
