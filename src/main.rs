@@ -124,6 +124,10 @@ enum Commands {
         #[arg(long)]
         exclude_themes: Option<String>,
 
+        /// Exclude the opponent's initial setup move (advances FEN to puzzle start position)
+        #[arg(long)]
+        exclude_setup_move: bool,
+
         /// Maximum number of puzzles to output
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
@@ -158,6 +162,10 @@ enum Commands {
         /// Exclude themes (comma-separated)
         #[arg(long)]
         exclude_themes: Option<String>,
+
+        /// Exclude the opponent's initial setup move (advances FEN to puzzle start position)
+        #[arg(long)]
+        exclude_setup_move: bool,
 
         /// Number of random puzzles to pick
         #[arg(short, long, default_value_t = 1)]
@@ -202,6 +210,10 @@ enum Commands {
         #[arg(long)]
         exclude_themes: Option<String>,
 
+        /// Exclude the opponent's initial setup move (advances FEN to puzzle start position)
+        #[arg(long)]
+        exclude_setup_move: bool,
+
         /// Sample uniformly across the rating range instead of taking only the lowest rating
         #[arg(long)]
         sample: bool,
@@ -210,6 +222,7 @@ enum Commands {
         #[arg(short, long)]
         limit: Option<usize>,
     },
+
 
 
 
@@ -432,6 +445,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             themes,
             any_themes,
             exclude_themes,
+            exclude_setup_move,
             limit,
             json,
             pgn,
@@ -449,7 +463,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 excluded_themes: excl_mask,
             };
 
-            let results = if ver == LPDB_VERSION_V4 {
+            let mut results = if ver == LPDB_VERSION_V4 {
                 let db = ColumnarDb::open(&cli.db)?;
                 db.query_puzzles(&criteria, limit)
             } else if ver == LPDB_VERSION_V3 {
@@ -460,11 +474,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 db.query_puzzles(&criteria, limit)
             };
 
+            if exclude_setup_move {
+                results = results.into_iter().map(|p| Exporter::puzzle_without_setup_move(&p)).collect();
+            }
+
             if json {
                 println!("{}", serde_json::to_string_pretty(&results)?);
             } else if pgn {
                 for p in &results {
-                    print!("{}", Exporter::puzzle_to_pgn(p));
+                    print!("{}", Exporter::puzzle_to_pgn_with_options(p, !exclude_setup_move));
                 }
             } else if csv {
                 print!("PuzzleId,FEN,Moves,Rating,Themes\n");
@@ -483,6 +501,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_rating,
             themes,
             exclude_themes,
+            exclude_setup_move,
             count,
             json,
             pgn,
@@ -524,11 +543,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
+            if exclude_setup_move {
+                results = results.into_iter().map(|p| Exporter::puzzle_without_setup_move(&p)).collect();
+            }
+
             if json {
                 println!("{}", serde_json::to_string_pretty(&results)?);
             } else if pgn {
                 for p in &results {
-                    print!("{}", Exporter::puzzle_to_pgn(p));
+                    print!("{}", Exporter::puzzle_to_pgn_with_options(p, !exclude_setup_move));
                 }
             } else {
                 for p in &results {
@@ -545,6 +568,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             themes,
             any_themes,
             exclude_themes,
+            exclude_setup_move,
             sample,
             limit,
         } => {
@@ -564,7 +588,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Exporting puzzles from {:?}...", cli.db);
             let start = Instant::now();
 
-            let mut puzzles = if ver == LPDB_VERSION_V4 {
+            let puzzles = if ver == LPDB_VERSION_V4 {
                 let db = ColumnarDb::open(&cli.db)?;
                 if sample && limit.is_some() {
                     // Fetch all matching puzzles across the rating range, then sample uniformly
@@ -606,7 +630,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-
             let is_csv = match format.as_deref() {
                 Some("csv") | Some("CSV") => true,
                 Some("pgn") | Some("PGN") => false,
@@ -619,10 +642,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
+            let include_setup = !exclude_setup_move;
             let exported_count = if is_csv {
-                Exporter::export_to_csv_file(&puzzles, &output)?
+                Exporter::export_to_csv_file(&puzzles, &output, include_setup)?
             } else {
-                Exporter::export_to_pgn_file(&puzzles, &output)?
+                Exporter::export_to_pgn_file(&puzzles, &output, include_setup)?
             };
 
             let elapsed = start.elapsed();
@@ -634,6 +658,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::fs::metadata(&output)?.len() as f64 / (1024.0 * 1024.0)
             );
         }
+
 
 
         Commands::Bench { iterations } => {

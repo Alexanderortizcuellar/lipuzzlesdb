@@ -422,19 +422,168 @@ impl BoardState {
         // Simple heuristic for checkmate notation check
         false
     }
+    fn to_fen(&self) -> String {
+        let mut result = String::with_capacity(90);
+
+        // 1. Board placement
+        for rank in 0..8 {
+            let mut empty_run = 0;
+            for file in 0..8 {
+                let sq = rank * 8 + file;
+                match self.squares[sq] {
+                    None => empty_run += 1,
+                    Some(Piece { color, piece_type }) => {
+                        if empty_run > 0 {
+                            result.push_str(&empty_run.to_string());
+                            empty_run = 0;
+                        }
+                        let mut c = match piece_type {
+                            PieceType::Pawn => 'p',
+                            PieceType::Knight => 'n',
+                            PieceType::Bishop => 'b',
+                            PieceType::Rook => 'r',
+                            PieceType::Queen => 'q',
+                            PieceType::King => 'k',
+                        };
+                        if color == Color::White {
+                            c = c.to_ascii_uppercase();
+                        }
+                        result.push(c);
+                    }
+                }
+            }
+            if empty_run > 0 {
+                result.push_str(&empty_run.to_string());
+            }
+            if rank < 7 {
+                result.push('/');
+            }
+        }
+
+        // 2. Active turn
+        result.push(' ');
+        result.push(if self.turn == Color::White { 'w' } else { 'b' });
+
+        // 3. Castling rights
+        result.push(' ');
+        let mut castling_str = String::new();
+        if self.castling[0] { castling_str.push('K'); }
+        if self.castling[1] { castling_str.push('Q'); }
+        if self.castling[2] { castling_str.push('k'); }
+        if self.castling[3] { castling_str.push('q'); }
+        if castling_str.is_empty() {
+            result.push('-');
+        } else {
+            result.push_str(&castling_str);
+        }
+
+        // 4. En-passant square
+        result.push(' ');
+        if let Some(ep) = self.ep_square {
+            let file = ep % 8;
+            let rank = 7 - (ep / 8);
+            result.push((b'a' + file) as char);
+            result.push((b'1' + rank) as char);
+        } else {
+            result.push('-');
+        }
+
+        // 5. Halfmove clock & Fullmove number
+        result.push(' ');
+        result.push_str(&self.halfmove.to_string());
+        result.push(' ');
+        result.push_str(&self.fullmove.to_string());
+
+        result
+    }
 }
 
 pub struct Exporter;
 
 impl Exporter {
     /// Formats a single puzzle into standard PGN format.
-    ///
-    /// The PGN includes full FEN setup, puzzle metadata tags, and the SAN move sequence
-    /// with move numbering starting from the FEN fullmove count and side to move.
     pub fn puzzle_to_pgn(puzzle: &Puzzle) -> String {
-        let mut pgn = String::with_capacity(512);
+        Self::puzzle_to_pgn_with_options(puzzle, true)
+    }
 
-        // Header tags
+    /// Formats a single puzzle into standard PGN format with option to include or exclude the opponent's setup move.
+    ///
+    /// When `include_setup_move` is false:
+    /// - The initial opponent move (Move 1) is executed on the board to advance the FEN to the exact state where the user must solve the puzzle.
+    /// - The PGN moves start directly with the player's solution move.
+    pub fn puzzle_to_pgn_with_options(puzzle: &Puzzle, include_setup_move: bool) -> String {
+        let mut board = BoardState::from_fen(&puzzle.fen);
+        let moves = &puzzle.moves;
+
+        if !include_setup_move && moves.len() > 1 {
+            // Apply first (setup) move to advance board state and FEN
+            let mut setup_san = String::new();
+            if let Some(ref mut b) = board {
+                setup_san = b.uci_to_san_and_apply(&moves[0]);
+            }
+
+            let advanced_fen = if let Some(ref b) = board {
+                b.to_fen()
+            } else {
+                puzzle.fen.clone()
+            };
+
+            let mut pgn = String::with_capacity(512);
+            pgn.push_str(&format!("[Event \"Lichess Puzzle {}\"]\n", puzzle.id));
+            pgn.push_str("[Site \"https://lichess.org/training\"]\n");
+            pgn.push_str("[Date \"????.??.??\"]\n");
+            pgn.push_str("[White \"Puzzle\"]\n");
+            pgn.push_str("[Black \"Puzzle\"]\n");
+            pgn.push_str("[Result \"*\"]\n");
+            pgn.push_str("[SetUp \"1\"]\n");
+            pgn.push_str(&format!("[FEN \"{}\"]\n", advanced_fen));
+            pgn.push_str(&format!("[PuzzleId \"{}\"]\n", puzzle.id));
+            pgn.push_str(&format!("[Rating \"{}\"]\n", puzzle.rating));
+            if !puzzle.themes.is_empty() {
+                pgn.push_str(&format!("[Themes \"{}\"]\n", puzzle.themes.join(" ")));
+            }
+            pgn.push_str(&format!("[SetupMove \"{}\"]\n", setup_san));
+            pgn.push('\n');
+
+            let fen_parts: Vec<&str> = advanced_fen.split_whitespace().collect();
+            let is_black_to_move = fen_parts.get(1).map(|&c| c == "b").unwrap_or(false);
+            let fullmove_number = fen_parts.get(5).and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+
+            let mut current_move = fullmove_number;
+            let mut is_black = is_black_to_move;
+
+            for (i, uci_mv) in moves[1..].iter().enumerate() {
+                let san_mv = if let Some(ref mut b) = board {
+                    b.uci_to_san_and_apply(uci_mv)
+                } else {
+                    uci_mv.clone()
+                };
+
+                if i == 0 {
+                    if is_black {
+                        pgn.push_str(&format!("{}... {} ", current_move, san_mv));
+                        current_move += 1;
+                        is_black = false;
+                    } else {
+                        pgn.push_str(&format!("{}. {} ", current_move, san_mv));
+                        is_black = true;
+                    }
+                } else if !is_black {
+                    pgn.push_str(&format!("{}. {} ", current_move, san_mv));
+                    is_black = true;
+                } else {
+                    pgn.push_str(&format!("{} ", san_mv));
+                    current_move += 1;
+                    is_black = false;
+                }
+            }
+
+            pgn.push_str("*\n\n");
+            return pgn;
+        }
+
+        // Default behavior: Include setup move
+        let mut pgn = String::with_capacity(512);
         pgn.push_str(&format!("[Event \"Lichess Puzzle {}\"]\n", puzzle.id));
         pgn.push_str("[Site \"https://lichess.org/training\"]\n");
         pgn.push_str("[Date \"????.??.??\"]\n");
@@ -450,7 +599,6 @@ impl Exporter {
         }
         pgn.push('\n');
 
-        let mut board = BoardState::from_fen(&puzzle.fen);
         let fen_parts: Vec<&str> = puzzle.fen.split_whitespace().collect();
         let is_black_to_move = fen_parts.get(1).map(|&c| c == "b").unwrap_or(false);
         let fullmove_number = fen_parts.get(5).and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
@@ -488,8 +636,31 @@ impl Exporter {
         pgn
     }
 
+    /// Transforms a puzzle to exclude the setup move, advancing the FEN and truncating moves.
+    pub fn puzzle_without_setup_move(puzzle: &Puzzle) -> Puzzle {
+        if puzzle.moves.len() <= 1 {
+            return puzzle.clone();
+        }
+
+        let mut board = match BoardState::from_fen(&puzzle.fen) {
+            Some(b) => b,
+            None => return puzzle.clone(),
+        };
+
+        board.uci_to_san_and_apply(&puzzle.moves[0]);
+        let advanced_fen = board.to_fen();
+
+        Puzzle {
+            id: puzzle.id.clone(),
+            fen: advanced_fen,
+            moves: puzzle.moves[1..].to_vec(),
+            rating: puzzle.rating,
+            themes: puzzle.themes.clone(),
+        }
+    }
+
     /// Exports a slice or iterator of puzzles to a PGN file.
-    pub fn export_to_pgn_file<'a, I>(puzzles: I, path: impl AsRef<Path>) -> io::Result<usize>
+    pub fn export_to_pgn_file<'a, I>(puzzles: I, path: impl AsRef<Path>, include_setup_move: bool) -> io::Result<usize>
     where
         I: IntoIterator<Item = &'a Puzzle>,
     {
@@ -498,7 +669,7 @@ impl Exporter {
         let mut count = 0;
 
         for p in puzzles {
-            let pgn_text = Self::puzzle_to_pgn(p);
+            let pgn_text = Self::puzzle_to_pgn_with_options(p, include_setup_move);
             writer.write_all(pgn_text.as_bytes())?;
             count += 1;
         }
@@ -526,7 +697,7 @@ impl Exporter {
     }
 
     /// Exports a slice or iterator of puzzles to a CSV file.
-    pub fn export_to_csv_file<'a, I>(puzzles: I, path: impl AsRef<Path>) -> io::Result<usize>
+    pub fn export_to_csv_file<'a, I>(puzzles: I, path: impl AsRef<Path>, include_setup_move: bool) -> io::Result<usize>
     where
         I: IntoIterator<Item = &'a Puzzle>,
     {
@@ -538,7 +709,12 @@ impl Exporter {
         writer.write_all(b"PuzzleId,FEN,Moves,Rating,Themes\n")?;
 
         for p in puzzles {
-            let line = Self::puzzle_to_csv_line(p);
+            let puzzle_to_export = if !include_setup_move {
+                Self::puzzle_without_setup_move(p)
+            } else {
+                p.clone()
+            };
+            let line = Self::puzzle_to_csv_line(&puzzle_to_export);
             writer.write_all(line.as_bytes())?;
             count += 1;
         }
@@ -547,6 +723,7 @@ impl Exporter {
         Ok(count)
     }
 }
+
 
 #[cfg(test)]
 mod tests {

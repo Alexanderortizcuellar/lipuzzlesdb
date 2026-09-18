@@ -111,20 +111,24 @@ lpdb build --csv-zst lichess_db_puzzle.csv.zst --output puzzles.lpdb
 # Query puzzles matching theme and rating
 lpdb --db puzzles.lpdb query --min-rating 1500 --max-rating 1600 --themes "fork,endgame" --limit 10
 
-# Export filtered puzzles directly to PGN (e.g. 600 hangingPiece puzzles for practice)
-lpdb --db puzzles.lpdb export --themes hangingPiece --limit 600 --output hanging_pieces.pgn
+# Export filtered puzzles directly to PGN (excluding checkmates, sampled uniformly across rating range)
+lpdb --db puzzles.lpdb export --themes hangingPiece --exclude-themes "mate,mateIn1,mateIn2,backRankMate" --min-rating 600 --max-rating 1800 --sample --limit 600 --output hanging_pieces.pgn
+
+# Export puzzles starting directly at player's turn (advances FEN by executing initial setup move)
+lpdb --db puzzles.lpdb export --themes fork --exclude-setup-move --limit 500 --output forks.pgn
 
 # Export filtered puzzles to CSV
 lpdb --db puzzles.lpdb export --min-rating 1400 --max-rating 1800 --themes "fork" --limit 500 --output forks.csv
 
-# Output random puzzle in PGN format
-lpdb --db puzzles.lpdb random --min-rating 1800 --max-rating 2000 --themes "endgame" --pgn
+# Output random puzzle in PGN format directly starting at solver's move
+lpdb --db puzzles.lpdb random --min-rating 1800 --max-rating 2000 --themes "endgame" --exclude-setup-move --pgn
 
 # Lookup puzzle by ID
 lpdb --db puzzles.lpdb get --id 00008 --board
 ```
 
 ---
+
 
 
 ## 🧩 Rust API Example
