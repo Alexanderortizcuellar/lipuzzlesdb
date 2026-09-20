@@ -234,6 +234,26 @@ enum Commands {
     },
 }
 
+fn piece_to_unicode(c: char) -> char {
+    match c {
+        // White pieces
+        'K' => '♔',
+        'Q' => '♕',
+        'R' => '♖',
+        'B' => '♗',
+        'N' => '♘',
+        'P' => '♙',
+        // Black pieces
+        'k' => '♚',
+        'q' => '♛',
+        'r' => '♜',
+        'b' => '♝',
+        'n' => '♞',
+        'p' => '♟',
+        _ => c,
+    }
+}
+
 fn print_ascii_board(fen: &str) {
     let board_part = fen.split_whitespace().next().unwrap_or("");
     println!("  +-----------------+");
@@ -243,10 +263,10 @@ fn print_ascii_board(fen: &str) {
         for c in rank.chars() {
             if let Some(digit) = c.to_digit(10) {
                 for _ in 0..digit {
-                    print!(" .");
+                    print!(" ·");
                 }
             } else {
-                print!(" {}", c);
+                print!(" {}", piece_to_unicode(c));
             }
         }
         println!(" |");
@@ -255,6 +275,7 @@ fn print_ascii_board(fen: &str) {
     println!("  +-----------------+");
     println!("    a b c d e f g h");
 }
+
 
 fn print_puzzle(p: &Puzzle, show_board: bool) {
     println!("==================================================");
