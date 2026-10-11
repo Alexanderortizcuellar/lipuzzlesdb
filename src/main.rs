@@ -1,13 +1,14 @@
-use std::fs::File;
-use std::io::Read;
-use std::path::PathBuf;
-use std::time::Instant;
 use clap::{Parser, Subcommand};
 use lipuzzles::{
-    download_lichess_puzzle_db, BlockCompressedDb, BlockDbBuilder, ColumnarBuilderOptions,
-    ColumnarDb, ColumnarDbBuilder, DbBuilder, Exporter, Puzzle, PuzzleDatabase, QueryCriteria, ThemeMask,
-    LPDB_VERSION_V3, LPDB_VERSION_V4,
+    download_and_build_lgdb, download_lichess_puzzle_db, parse_id_list, BlockCompressedDb,
+    BlockDbBuilder, ColumnarBuilderOptions, ColumnarDb, ColumnarDbBuilder, DbBuilder, Exporter,
+    GameDownloadOptions, Lgdb, Puzzle, PuzzleDatabase, QueryCriteria, ThemeMask, LPDB_VERSION_V3,
+    LPDB_VERSION_V4,
 };
+use std::fs::File;
+use std::io::{Read, Write};
+use std::path::PathBuf;
+use std::time::Instant;
 
 #[derive(Parser)]
 #[command(name = "lpdb", author = "Antigravity", version = "0.6.0")]
@@ -100,6 +101,10 @@ enum Commands {
         /// Render ASCII chessboard
         #[arg(short, long, default_value_t = true)]
         board: bool,
+
+        /// Output puzzle as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Query puzzles with filters
@@ -223,14 +228,105 @@ enum Commands {
         limit: Option<usize>,
     },
 
-
-
-
     /// Benchmark database performance (mmap, random seek, filtering throughput)
     Bench {
         /// Number of random lookups to perform
         #[arg(long, default_value_t = 20_000)]
         iterations: usize,
+    },
+
+    /// Download games from Lichess associated with puzzles or game IDs into compressed .lgdb format
+    FetchGames {
+        /// Comma-separated list of puzzle IDs or path to file containing puzzle IDs
+        #[arg(short, long)]
+        puzzles: Option<String>,
+
+        /// Comma-separated list of game IDs/URLs or path to file containing game IDs
+        #[arg(long)]
+        game_ids: Option<String>,
+
+        /// Extract puzzle IDs from an existing .lpdb puzzle database
+        #[arg(long)]
+        from_db: Option<PathBuf>,
+
+        /// Filter by min rating when reading from --from-db
+        #[arg(long)]
+        min_rating: Option<u16>,
+
+        /// Filter by max rating when reading from --from-db
+        #[arg(long)]
+        max_rating: Option<u16>,
+
+        /// Filter by themes when reading from --from-db
+        #[arg(long)]
+        themes: Option<String>,
+
+        /// Randomly sample puzzles when reading from --from-db
+        #[arg(long)]
+        random: bool,
+
+        /// Maximum number of games to download
+        #[arg(short, long)]
+        limit: Option<usize>,
+
+        /// Output path for compressed game database (.lgdb)
+        #[arg(short, long, default_value = "games.lgdb")]
+        output: PathBuf,
+
+        /// Zstandard compression level (1..19, default: 19)
+        #[arg(long, default_value_t = 19)]
+        compression_level: i32,
+
+        /// Lichess API personal access token (auto-detected if omitted)
+        #[arg(long)]
+        token: Option<String>,
+
+        /// Skip confirmation prompt for large downloads (>1000 games)
+        #[arg(short = 'y', long)]
+        yes: bool,
+
+        /// Pause every N games to allow rate limit cooldown (0 = disabled)
+        #[arg(long, default_value_t = 0)]
+        pause_every: usize,
+
+        /// Duration of cooldown pause in seconds
+        #[arg(long, default_value_t = 2.0)]
+        pause_seconds: f64,
+
+        /// Output progress as JSON lines to stdout
+        #[arg(long)]
+        json_progress: bool,
+    },
+
+    /// Inspect a compressed .lgdb game database or export games to PGN
+    InspectGames {
+        /// Path to .lgdb game database file
+        #[arg(short, long, default_value = "games.lgdb")]
+        games: PathBuf,
+
+        /// Number of sample games to preview
+        #[arg(short, long, default_value_t = 5)]
+        limit: usize,
+
+        /// Specific game index to fetch (0-based)
+        #[arg(long)]
+        index: Option<usize>,
+
+        /// Lookup game by associated Puzzle ID
+        #[arg(long)]
+        puzzle_id: Option<String>,
+
+        /// Lookup game by Lichess Game ID
+        #[arg(long)]
+        game_id: Option<String>,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Export all games from the .lgdb database into a PGN file
+        #[arg(long)]
+        export_pgn: Option<PathBuf>,
     },
 }
 
@@ -275,7 +371,6 @@ fn print_ascii_board(fen: &str) {
     println!("  +-----------------+");
     println!("    a b c d e f g h");
 }
-
 
 fn print_puzzle(p: &Puzzle, show_board: bool) {
     println!("==================================================");
@@ -375,7 +470,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             } else if let Some(cz) = zst_path {
-                println!("Building V4 Columnar Database directly from CSV.ZST: {:?}", cz);
+                println!(
+                    "Building V4 Columnar Database directly from CSV.ZST: {:?}",
+                    cz
+                );
                 let stats = ColumnarDbBuilder::build_from_csv_zst(cz, &output, opts)?;
                 println!(
                     "Done! Imported {} puzzles ({} blocks) -> {:.2} MB",
@@ -395,34 +493,82 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if ver == LPDB_VERSION_V4 {
                 let db = ColumnarDb::open(&cli.db)?;
                 let load_time = start.elapsed();
-                println!("Database:           {:?} (Format V4 - Columnar Block-Compressed)", cli.db);
-                println!("Load / MMap Time:   {:.3} ms", load_time.as_secs_f64() * 1000.0);
+                println!(
+                    "Database:           {:?} (Format V4 - Columnar Block-Compressed)",
+                    cli.db
+                );
+                println!(
+                    "Load / MMap Time:   {:.3} ms",
+                    load_time.as_secs_f64() * 1000.0
+                );
                 println!("Total Puzzles:      {}", db.len());
-                println!("Total Blocks:       {} ({} puzzles/block)", db.header().block_count, db.header().block_size);
+                println!(
+                    "Total Blocks:       {} ({} puzzles/block)",
+                    db.header().block_count,
+                    db.header().block_size
+                );
                 println!("Unique Themes:      {}", db.theme_dict().len());
-                println!("Rating Range:       {} - {}", db.header().min_rating, db.header().max_rating);
+                println!(
+                    "Rating Range:       {} - {}",
+                    db.header().min_rating,
+                    db.header().max_rating
+                );
                 println!("Zstd Level:         {}", db.header().compression_level);
-                println!("File Size:          {:.2} MB", (std::fs::metadata(&cli.db)?.len()) as f64 / (1024.0 * 1024.0));
+                println!(
+                    "File Size:          {:.2} MB",
+                    (std::fs::metadata(&cli.db)?.len()) as f64 / (1024.0 * 1024.0)
+                );
             } else if ver == LPDB_VERSION_V3 {
                 let db = BlockCompressedDb::open(&cli.db)?;
                 let load_time = start.elapsed();
-                println!("Database:           {:?} (Format V3 - Row Block-Compressed)", cli.db);
-                println!("Load / MMap Time:   {:.3} ms", load_time.as_secs_f64() * 1000.0);
+                println!(
+                    "Database:           {:?} (Format V3 - Row Block-Compressed)",
+                    cli.db
+                );
+                println!(
+                    "Load / MMap Time:   {:.3} ms",
+                    load_time.as_secs_f64() * 1000.0
+                );
                 println!("Total Puzzles:      {}", db.len());
-                println!("Rating Range:       {} - {}", db.header().min_rating, db.header().max_rating);
-                println!("File Size:          {:.2} MB", (std::fs::metadata(&cli.db)?.len()) as f64 / (1024.0 * 1024.0));
+                println!(
+                    "Rating Range:       {} - {}",
+                    db.header().min_rating,
+                    db.header().max_rating
+                );
+                println!(
+                    "File Size:          {:.2} MB",
+                    (std::fs::metadata(&cli.db)?.len()) as f64 / (1024.0 * 1024.0)
+                );
             } else {
                 let db = PuzzleDatabase::open(&cli.db)?;
                 let load_time = start.elapsed();
-                println!("Database:           {:?} (Format V2 - Direct Fixed-Record MMap)", cli.db);
-                println!("Load / MMap Time:   {:.3} ms", load_time.as_secs_f64() * 1000.0);
+                println!(
+                    "Database:           {:?} (Format V2 - Direct Fixed-Record MMap)",
+                    cli.db
+                );
+                println!(
+                    "Load / MMap Time:   {:.3} ms",
+                    load_time.as_secs_f64() * 1000.0
+                );
                 println!("Total Puzzles:      {}", db.len());
-                println!("Rating Range:       {} - {}", db.header().min_rating, db.header().max_rating);
-                println!("File Size:          {:.2} MB", (std::fs::metadata(&cli.db)?.len()) as f64 / (1024.0 * 1024.0));
+                println!(
+                    "Rating Range:       {} - {}",
+                    db.header().min_rating,
+                    db.header().max_rating
+                );
+                println!(
+                    "File Size:          {:.2} MB",
+                    (std::fs::metadata(&cli.db)?.len()) as f64 / (1024.0 * 1024.0)
+                );
             }
         }
 
-        Commands::Get { id, index, board } => {
+        Commands::Get {
+            id,
+            index,
+            board,
+            json,
+        } => {
             let ver = detect_db_version(&cli.db);
             let puzzle = if ver == LPDB_VERSION_V4 {
                 let db = ColumnarDb::open(&cli.db)?;
@@ -455,8 +601,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             match puzzle {
-                Some(p) => print_puzzle(&p, board),
-                None => println!("Puzzle not found."),
+                Some(p) => {
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&p)?);
+                    } else {
+                        print_puzzle(&p, board);
+                    }
+                }
+                None => {
+                    if json {
+                        println!("null");
+                    } else {
+                        println!("Puzzle not found.");
+                    }
+                }
             }
         }
 
@@ -473,9 +631,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             csv,
         } => {
             let ver = detect_db_version(&cli.db);
-            let req_mask = themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
-            let any_mask = any_themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
-            let excl_mask = exclude_themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
+            let req_mask = themes
+                .as_deref()
+                .map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
+            let any_mask = any_themes
+                .as_deref()
+                .map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
+            let excl_mask = exclude_themes
+                .as_deref()
+                .map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
             let criteria = QueryCriteria {
                 min_rating,
                 max_rating,
@@ -496,14 +660,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             if exclude_setup_move {
-                results = results.into_iter().map(|p| Exporter::puzzle_without_setup_move(&p)).collect();
+                results = results
+                    .into_iter()
+                    .map(|p| Exporter::puzzle_without_setup_move(&p))
+                    .collect();
             }
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&results)?);
             } else if pgn {
                 for p in &results {
-                    print!("{}", Exporter::puzzle_to_pgn_with_options(p, !exclude_setup_move));
+                    print!(
+                        "{}",
+                        Exporter::puzzle_to_pgn_with_options(p, !exclude_setup_move)
+                    );
                 }
             } else if csv {
                 print!("PuzzleId,FEN,Moves,Rating,Themes\n");
@@ -512,7 +682,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             } else {
                 for p in &results {
-                    println!("[{}] Rating: {:4} | Themes: {:<35} | Moves: {}", p.id, p.rating, p.themes.join(", "), p.moves.join(" "));
+                    println!(
+                        "[{}] Rating: {:4} | Themes: {:<35} | Moves: {}",
+                        p.id,
+                        p.rating,
+                        p.themes.join(", "),
+                        p.moves.join(" ")
+                    );
                 }
             }
         }
@@ -528,8 +704,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             pgn,
         } => {
             let ver = detect_db_version(&cli.db);
-            let req_mask = themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
-            let excl_mask = exclude_themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
+            let req_mask = themes
+                .as_deref()
+                .map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
+            let excl_mask = exclude_themes
+                .as_deref()
+                .map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
             let criteria = QueryCriteria {
                 min_rating,
                 max_rating,
@@ -565,14 +745,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             if exclude_setup_move {
-                results = results.into_iter().map(|p| Exporter::puzzle_without_setup_move(&p)).collect();
+                results = results
+                    .into_iter()
+                    .map(|p| Exporter::puzzle_without_setup_move(&p))
+                    .collect();
             }
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&results)?);
             } else if pgn {
                 for p in &results {
-                    print!("{}", Exporter::puzzle_to_pgn_with_options(p, !exclude_setup_move));
+                    print!(
+                        "{}",
+                        Exporter::puzzle_to_pgn_with_options(p, !exclude_setup_move)
+                    );
                 }
             } else {
                 for p in &results {
@@ -594,9 +780,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             limit,
         } => {
             let ver = detect_db_version(&cli.db);
-            let req_mask = themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
-            let any_mask = any_themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
-            let excl_mask = exclude_themes.as_deref().map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
+            let req_mask = themes
+                .as_deref()
+                .map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
+            let any_mask = any_themes
+                .as_deref()
+                .map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
+            let excl_mask = exclude_themes
+                .as_deref()
+                .map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
             let criteria = QueryCriteria {
                 min_rating,
                 max_rating,
@@ -618,7 +810,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         all
                     } else {
                         let step = all.len() as f64 / export_limit as f64;
-                        (0..export_limit).map(|i| all[(i as f64 * step) as usize].clone()).collect()
+                        (0..export_limit)
+                            .map(|i| all[(i as f64 * step) as usize].clone())
+                            .collect()
                     }
                 } else {
                     db.query_puzzles(&criteria, export_limit)
@@ -631,7 +825,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         all
                     } else {
                         let step = all.len() as f64 / export_limit as f64;
-                        (0..export_limit).map(|i| all[(i as f64 * step) as usize].clone()).collect()
+                        (0..export_limit)
+                            .map(|i| all[(i as f64 * step) as usize].clone())
+                            .collect()
                     }
                 } else {
                     db.query_puzzles(&criteria, export_limit)
@@ -644,7 +840,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         all
                     } else {
                         let step = all.len() as f64 / export_limit as f64;
-                        (0..export_limit).map(|i| all[(i as f64 * step) as usize].clone()).collect()
+                        (0..export_limit)
+                            .map(|i| all[(i as f64 * step) as usize].clone())
+                            .collect()
                     }
                 } else {
                     db.query_puzzles(&criteria, export_limit)
@@ -680,8 +878,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
 
-
-
         Commands::Bench { iterations } => {
             let ver = detect_db_version(&cli.db);
             println!("Running benchmarks on {:?} (Version: {})...", cli.db, ver);
@@ -690,7 +886,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if ver == LPDB_VERSION_V4 {
                 let db = ColumnarDb::open(&cli.db)?;
                 let open_duration = t0.elapsed();
-                println!("V4 Header & Block Index MMap Open: {:.3} ms", open_duration.as_secs_f64() * 1000.0);
+                println!(
+                    "V4 Header & Block Index MMap Open: {:.3} ms",
+                    open_duration.as_secs_f64() * 1000.0
+                );
                 let n = db.len();
 
                 let mut rng = rand::thread_rng();
@@ -714,7 +913,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 let db = PuzzleDatabase::open(&cli.db)?;
                 let open_duration = t0.elapsed();
-                println!("V2 Zero-Copy MMap Open: {:.3} ms", open_duration.as_secs_f64() * 1000.0);
+                println!(
+                    "V2 Zero-Copy MMap Open: {:.3} ms",
+                    open_duration.as_secs_f64() * 1000.0
+                );
                 let n = db.len();
 
                 let mut rng = rand::thread_rng();
@@ -735,6 +937,294 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     (rand_duration.as_nanos() as f64) / (iterations as f64),
                     check_sum
                 );
+            }
+        }
+
+        Commands::FetchGames {
+            puzzles,
+            game_ids,
+            from_db,
+            min_rating,
+            max_rating,
+            themes,
+            random,
+            limit,
+            output,
+            compression_level,
+            token,
+            yes,
+            pause_every,
+            pause_seconds,
+            json_progress,
+        } => {
+            let mut puzzle_ids = Vec::new();
+            let mut game_id_list = Vec::new();
+
+            if let Some(p) = puzzles {
+                puzzle_ids.extend(parse_id_list(&p));
+            }
+
+            if let Some(g) = game_ids {
+                game_id_list.extend(parse_id_list(&g));
+            }
+
+            if let Some(db_path) = from_db {
+                println!("Reading puzzle IDs from database: {:?}", db_path);
+                let ver = detect_db_version(&db_path);
+                let req_mask = themes
+                    .as_deref()
+                    .map(|t| ThemeMask::from_names(t.split(',').map(|s| s.trim())));
+                let criteria = QueryCriteria {
+                    min_rating,
+                    max_rating,
+                    required_themes: req_mask,
+                    any_themes: None,
+                    excluded_themes: None,
+                };
+
+                let query_limit = limit.unwrap_or(usize::MAX);
+                let mut found_puzzles = if ver == LPDB_VERSION_V4 {
+                    let db = ColumnarDb::open(&db_path)?;
+                    db.query_puzzles(&criteria, query_limit)
+                } else if ver == LPDB_VERSION_V3 {
+                    let db = BlockCompressedDb::open(&db_path)?;
+                    db.query_puzzles(&criteria, query_limit)
+                } else {
+                    let db = PuzzleDatabase::open(&db_path)?;
+                    db.query_puzzles(&criteria, query_limit)
+                };
+
+                if random && !found_puzzles.is_empty() {
+                    use rand::seq::SliceRandom;
+                    let mut rng = rand::thread_rng();
+                    found_puzzles.shuffle(&mut rng);
+                }
+
+                if let Some(lim) = limit {
+                    found_puzzles.truncate(lim);
+                }
+
+                for p in found_puzzles {
+                    puzzle_ids.push(p.id);
+                }
+            }
+
+            if let Some(lim) = limit {
+                puzzle_ids.truncate(lim);
+            }
+
+            let total_count = puzzle_ids.len() + game_id_list.len();
+            if total_count == 0 {
+                eprintln!("Error: No puzzle IDs or game IDs specified. Use --puzzles, --game-ids, or --from-db");
+                std::process::exit(1);
+            }
+
+            // User confirmation if > 1000 games
+            if total_count > 1000 && !yes {
+                println!(
+                    "Warning: You have requested to download {} games from Lichess.",
+                    total_count
+                );
+                println!("This may take considerable time and consume API rate limits.");
+                print!("Do you want to proceed? [y/N]: ");
+                std::io::stdout().flush()?;
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                let ans = input.trim();
+                if !ans.eq_ignore_ascii_case("y") && !ans.eq_ignore_ascii_case("yes") {
+                    println!("Download cancelled by user.");
+                    return Ok(());
+                }
+            }
+
+            let opts = GameDownloadOptions {
+                puzzle_ids,
+                game_ids: game_id_list,
+                limit,
+                output_path: output.display().to_string(),
+                compression_level,
+                token,
+                pause_every,
+                pause_duration_secs: pause_seconds,
+                json_progress,
+            };
+
+            let stats = download_and_build_lgdb(opts)?;
+            println!("--------------------------------------------------");
+            println!("Download Summary:");
+            println!("  Total Attempted:    {}", stats.attempted);
+            println!("  Successfully Saved: {}", stats.succeeded);
+            println!("  Failed / Missing:   {}", stats.failed);
+            println!("  Total Plies:        {}", stats.db_stats.total_plies);
+            println!("  Elapsed Time:       {:.2}s", stats.duration.as_secs_f64());
+            println!(
+                "  Compressed DB Size: {:.2} KB ({:.1} bytes/game)",
+                stats.db_stats.total_file_size as f64 / 1024.0,
+                stats.db_stats.total_file_size as f64 / stats.succeeded.max(1) as f64
+            );
+            let comp_factor = if stats.db_stats.compression_ratio > 0.0 {
+                1.0 / stats.db_stats.compression_ratio
+            } else {
+                1.0
+            };
+            println!("  Compression Ratio:  {:.2}x", comp_factor);
+            println!("--------------------------------------------------");
+        }
+
+        Commands::InspectGames {
+            games,
+            limit,
+            index,
+            puzzle_id,
+            game_id,
+            json,
+            export_pgn,
+        } => {
+            let lgdb = Lgdb::open(&games)?;
+            let file_size = std::fs::metadata(&games)?.len();
+            let header = lgdb.header();
+
+            if json {
+                if let Some(i) = index {
+                    if let Some(g) = lgdb.get(i) {
+                        let moves_uci: Vec<String> = g.moves.iter().map(|m| m.to_uci()).collect();
+                        let obj = serde_json::json!({
+                            "index": i,
+                            "puzzle_id": g.puzzle_id,
+                            "game_id": g.game_id,
+                            "date": g.date,
+                            "result": g.result.as_str(),
+                            "plies": g.moves.len(),
+                            "moves": moves_uci,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&obj)?);
+                    } else {
+                        println!("null");
+                    }
+                    return Ok(());
+                }
+
+                if let Some(ref pid) = puzzle_id {
+                    if let Some(g) = lgdb.find_by_puzzle_id(pid) {
+                        let moves_uci: Vec<String> = g.moves.iter().map(|m| m.to_uci()).collect();
+                        let obj = serde_json::json!({
+                            "puzzle_id": g.puzzle_id,
+                            "game_id": g.game_id,
+                            "date": g.date,
+                            "result": g.result.as_str(),
+                            "plies": g.moves.len(),
+                            "moves": moves_uci,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&obj)?);
+                    } else {
+                        println!("null");
+                    }
+                    return Ok(());
+                }
+
+                if let Some(ref gid) = game_id {
+                    if let Some(g) = lgdb.find_by_game_id(gid) {
+                        let moves_uci: Vec<String> = g.moves.iter().map(|m| m.to_uci()).collect();
+                        let obj = serde_json::json!({
+                            "puzzle_id": g.puzzle_id,
+                            "game_id": g.game_id,
+                            "date": g.date,
+                            "result": g.result.as_str(),
+                            "plies": g.moves.len(),
+                            "moves": moves_uci,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&obj)?);
+                    } else {
+                        println!("null");
+                    }
+                    return Ok(());
+                }
+
+                let mut list = Vec::new();
+                for i in 0..limit.min(lgdb.len()) {
+                    if let Some(g) = lgdb.get(i) {
+                        let moves_uci: Vec<String> = g.moves.iter().map(|m| m.to_uci()).collect();
+                        list.push(serde_json::json!({
+                            "index": i,
+                            "puzzle_id": g.puzzle_id,
+                            "game_id": g.game_id,
+                            "date": g.date,
+                            "result": g.result.as_str(),
+                            "plies": g.moves.len(),
+                            "moves": moves_uci,
+                        }));
+                    }
+                }
+                println!("{}", serde_json::to_string_pretty(&list)?);
+                return Ok(());
+            }
+
+            println!("Opening game database: {:?}", games);
+            println!("==================================================");
+            println!(
+                "Database:           {:?} (LGDB Format v{})",
+                games, header.version
+            );
+            println!("Total Games:        {}", lgdb.len());
+            println!("Total Moves (Plies):{}", header.uncompressed_size / 2);
+            println!(
+                "File Size:          {:.2} KB ({:.1} bytes/game)",
+                file_size as f64 / 1024.0,
+                file_size as f64 / lgdb.len().max(1) as f64
+            );
+            println!(
+                "Index Table Size:   {:.2} KB",
+                (header.game_count as u64 * 24) as f64 / 1024.0
+            );
+            println!(
+                "Compressed Moves:   {:.2} KB",
+                header.compressed_size as f64 / 1024.0
+            );
+            println!(
+                "Uncompressed Moves: {:.2} KB",
+                header.uncompressed_size as f64 / 1024.0
+            );
+            let ratio = if header.compressed_size > 0 {
+                header.uncompressed_size as f64 / header.compressed_size as f64
+            } else {
+                1.0
+            };
+            println!("Move Compression:   {:.2}x Zstandard", ratio);
+            println!("==================================================");
+
+            if let Some(pgn_path) = export_pgn {
+                println!("Exporting {} games to PGN: {:?}...", lgdb.len(), pgn_path);
+                let file = std::fs::File::create(&pgn_path)?;
+                let mut writer = std::io::BufWriter::new(file);
+                for i in 0..lgdb.len() {
+                    if let Some(pgn_game) = lgdb.to_pgn(i) {
+                        writer.write_all(pgn_game.as_bytes())?;
+                        writer.write_all(b"\n")?;
+                    }
+                }
+                writer.flush()?;
+                println!("Successfully exported to {:?}", pgn_path);
+            }
+
+            if limit > 0 && !lgdb.is_empty() {
+                println!("\nPreviewing first {} games:", limit.min(lgdb.len()));
+                for i in 0..limit.min(lgdb.len()) {
+                    let g = lgdb.get(i).unwrap();
+                    let moves_preview: Vec<String> =
+                        g.moves.iter().take(6).map(|m| m.to_uci()).collect();
+                    let ellipsis = if g.moves.len() > 6 { "..." } else { "" };
+                    println!(
+                        "  [{:>3}] Puzzle: {:<6} | Game: {:<8} | Date: {:<10} | Result: {:<7} | Plies: {:3} | Moves: {}{}",
+                        i + 1,
+                        g.puzzle_id,
+                        g.game_id,
+                        g.date,
+                        g.result.as_str(),
+                        g.moves.len(),
+                        moves_preview.join(" "),
+                        ellipsis
+                    );
+                }
             }
         }
     }

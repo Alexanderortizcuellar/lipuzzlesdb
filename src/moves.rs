@@ -118,15 +118,7 @@ mod tests {
 
     #[test]
     fn test_move_roundtrip() {
-        let tests = [
-            "e2e4",
-            "g1f3",
-            "e7e8q",
-            "a7a8r",
-            "c7c8b",
-            "h7h8n",
-            "f2f1q",
-        ];
+        let tests = ["e2e4", "g1f3", "e7e8q", "a7a8r", "c7c8b", "h7h8n", "f2f1q"];
 
         for m_str in tests {
             let pm = PackedMove::from_uci(m_str).expect("failed to parse move");

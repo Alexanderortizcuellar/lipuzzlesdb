@@ -2,8 +2,8 @@
 //!
 //! Fits up to 32 pieces (physical maximum in standard chess).
 
-use bytemuck::{Pod, Zeroable};
 use crate::fen::nibble_to_piece;
+use bytemuck::{Pod, Zeroable};
 
 #[repr(C, align(8))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
@@ -61,7 +61,11 @@ impl CompactBoard {
 
             if piece_idx < 32 {
                 let byte = self.pieces[piece_idx / 2];
-                let nibble = if piece_idx % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+                let nibble = if piece_idx % 2 == 0 {
+                    byte >> 4
+                } else {
+                    byte & 0x0F
+                };
                 if sq % 2 == 0 {
                     board[sq / 2] |= nibble << 4;
                 } else {
@@ -82,7 +86,11 @@ impl CompactBoard {
             for file in 0..8 {
                 let sq = rank * 8 + file;
                 let byte_val = board_nibbles[sq / 2];
-                let nibble = if sq % 2 == 0 { byte_val >> 4 } else { byte_val & 0x0F };
+                let nibble = if sq % 2 == 0 {
+                    byte_val >> 4
+                } else {
+                    byte_val & 0x0F
+                };
 
                 if nibble == 0 {
                     empty_run += 1;

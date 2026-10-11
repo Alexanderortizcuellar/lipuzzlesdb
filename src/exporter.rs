@@ -5,10 +5,10 @@
 //! and standard SAN (Standard Algebraic Notation, e.g. `Nxd5`, `Rxe6+`, `O-O`, `e8=Q#`) move formatting
 //! with fullmove numbering based on the puzzle FEN.
 
+use crate::db::Puzzle;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
-use crate::db::Puzzle;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Color {
@@ -85,7 +85,11 @@ impl BoardState {
                     if sq >= 64 {
                         return None;
                     }
-                    let color = if c.is_uppercase() { Color::White } else { Color::Black };
+                    let color = if c.is_uppercase() {
+                        Color::White
+                    } else {
+                        Color::Black
+                    };
                     let piece_type = match c.to_ascii_lowercase() {
                         'p' => PieceType::Pawn,
                         'n' => PieceType::Knight,
@@ -101,7 +105,11 @@ impl BoardState {
             }
         }
 
-        let turn = if turn_str == "b" { Color::Black } else { Color::White };
+        let turn = if turn_str == "b" {
+            Color::Black
+        } else {
+            Color::White
+        };
 
         let mut castling = [false; 4];
         if castling_str != "-" {
@@ -221,7 +229,8 @@ impl BoardState {
             for sq in 0..64 {
                 if sq != from_sq {
                     if let Some(other_piece) = self.squares[sq] {
-                        if other_piece == piece && self.can_piece_reach(sq, to_sq, piece.piece_type) {
+                        if other_piece == piece && self.can_piece_reach(sq, to_sq, piece.piece_type)
+                        {
                             candidates.push(sq);
                         }
                     }
@@ -298,7 +307,8 @@ impl BoardState {
             PieceType::Queen => {
                 let dr = (f_rank as isize - t_rank as isize).abs();
                 let df = (f_file as isize - t_file as isize).abs();
-                (dr == df || f_rank == t_rank || f_file == t_file) && self.is_path_clear(from_sq, to_sq)
+                (dr == df || f_rank == t_rank || f_file == t_file)
+                    && self.is_path_clear(from_sq, to_sq)
             }
             PieceType::King => {
                 let dr = (f_rank as isize - t_rank as isize).abs();
@@ -342,7 +352,11 @@ impl BoardState {
 
         // Handle en-passant capture
         if piece.piece_type == PieceType::Pawn && Some(to_sq as u8) == self.ep_square {
-            let cap_sq = if piece.color == Color::White { to_sq + 8 } else { to_sq - 8 };
+            let cap_sq = if piece.color == Color::White {
+                to_sq + 8
+            } else {
+                to_sq - 8
+            };
             self.squares[cap_sq] = None;
         }
 
@@ -381,7 +395,11 @@ impl BoardState {
         // Find king of this color
         let mut king_sq = None;
         for sq in 0..64 {
-            if let Some(Piece { color: c, piece_type: PieceType::King }) = self.squares[sq] {
+            if let Some(Piece {
+                color: c,
+                piece_type: PieceType::King,
+            }) = self.squares[sq]
+            {
                 if c == color {
                     king_sq = Some(sq);
                     break;
@@ -397,15 +415,24 @@ impl BoardState {
         let opp_color = color.opponent();
 
         for sq in 0..64 {
-            if let Some(Piece { color: c, piece_type: pt }) = self.squares[sq] {
+            if let Some(Piece {
+                color: c,
+                piece_type: pt,
+            }) = self.squares[sq]
+            {
                 if c == opp_color {
                     if pt == PieceType::Pawn {
                         let f_rank = sq / 8;
                         let f_file = sq % 8;
                         let k_rank = k_sq / 8;
                         let k_file = k_sq % 8;
-                        let forward_rank = if opp_color == Color::White { f_rank.wrapping_sub(1) } else { f_rank + 1 };
-                        if k_rank == forward_rank && (f_file as isize - k_file as isize).abs() == 1 {
+                        let forward_rank = if opp_color == Color::White {
+                            f_rank.wrapping_sub(1)
+                        } else {
+                            f_rank + 1
+                        };
+                        if k_rank == forward_rank && (f_file as isize - k_file as isize).abs() == 1
+                        {
                             return true;
                         }
                     } else if self.can_piece_reach(sq, k_sq, pt) {
@@ -467,10 +494,18 @@ impl BoardState {
         // 3. Castling rights
         result.push(' ');
         let mut castling_str = String::new();
-        if self.castling[0] { castling_str.push('K'); }
-        if self.castling[1] { castling_str.push('Q'); }
-        if self.castling[2] { castling_str.push('k'); }
-        if self.castling[3] { castling_str.push('q'); }
+        if self.castling[0] {
+            castling_str.push('K');
+        }
+        if self.castling[1] {
+            castling_str.push('Q');
+        }
+        if self.castling[2] {
+            castling_str.push('k');
+        }
+        if self.castling[3] {
+            castling_str.push('q');
+        }
         if castling_str.is_empty() {
             result.push('-');
         } else {
@@ -547,7 +582,10 @@ impl Exporter {
 
             let fen_parts: Vec<&str> = advanced_fen.split_whitespace().collect();
             let is_black_to_move = fen_parts.get(1).map(|&c| c == "b").unwrap_or(false);
-            let fullmove_number = fen_parts.get(5).and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+            let fullmove_number = fen_parts
+                .get(5)
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(1);
 
             let mut current_move = fullmove_number;
             let mut is_black = is_black_to_move;
@@ -601,7 +639,10 @@ impl Exporter {
 
         let fen_parts: Vec<&str> = puzzle.fen.split_whitespace().collect();
         let is_black_to_move = fen_parts.get(1).map(|&c| c == "b").unwrap_or(false);
-        let fullmove_number = fen_parts.get(5).and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+        let fullmove_number = fen_parts
+            .get(5)
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(1);
 
         let mut current_move = fullmove_number;
         let mut is_black = is_black_to_move;
@@ -660,7 +701,11 @@ impl Exporter {
     }
 
     /// Exports a slice or iterator of puzzles to a PGN file.
-    pub fn export_to_pgn_file<'a, I>(puzzles: I, path: impl AsRef<Path>, include_setup_move: bool) -> io::Result<usize>
+    pub fn export_to_pgn_file<'a, I>(
+        puzzles: I,
+        path: impl AsRef<Path>,
+        include_setup_move: bool,
+    ) -> io::Result<usize>
     where
         I: IntoIterator<Item = &'a Puzzle>,
     {
@@ -697,7 +742,11 @@ impl Exporter {
     }
 
     /// Exports a slice or iterator of puzzles to a CSV file.
-    pub fn export_to_csv_file<'a, I>(puzzles: I, path: impl AsRef<Path>, include_setup_move: bool) -> io::Result<usize>
+    pub fn export_to_csv_file<'a, I>(
+        puzzles: I,
+        path: impl AsRef<Path>,
+        include_setup_move: bool,
+    ) -> io::Result<usize>
     where
         I: IntoIterator<Item = &'a Puzzle>,
     {
@@ -723,7 +772,6 @@ impl Exporter {
         Ok(count)
     }
 }
-
 
 #[cfg(test)]
 mod tests {

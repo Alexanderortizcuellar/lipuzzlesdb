@@ -10,7 +10,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 
 use crate::board::CompactBoard;
-use crate::columnar_db::{BlockEntryV4, DbHeaderV4, DEFAULT_V4_BLOCK_SIZE, LPDB_MAGIC, LPDB_VERSION_V4};
+use crate::columnar_db::{
+    BlockEntryV4, DbHeaderV4, DEFAULT_V4_BLOCK_SIZE, LPDB_MAGIC, LPDB_VERSION_V4,
+};
 use crate::fen::PackedFen;
 use crate::id::{encode_base62_id, is_standard_base62_5char};
 use crate::moves::{encode_moves, PackedMove};
@@ -190,10 +192,8 @@ impl ColumnarDbBuilder {
             if let Ok(row) = row_res {
                 rows.push(row);
                 if rows.len() >= 50_000 {
-                    let chunk_results: Vec<ParsedPuzzleItem> = rows
-                        .par_drain(..)
-                        .filter_map(|r| r.process())
-                        .collect();
+                    let chunk_results: Vec<ParsedPuzzleItem> =
+                        rows.par_drain(..).filter_map(|r| r.process()).collect();
                     pb.inc(chunk_results.len() as u64);
                     parsed_items.extend(chunk_results);
                 }
@@ -201,10 +201,8 @@ impl ColumnarDbBuilder {
         }
 
         if !rows.is_empty() {
-            let chunk_results: Vec<ParsedPuzzleItem> = rows
-                .par_drain(..)
-                .filter_map(|r| r.process())
-                .collect();
+            let chunk_results: Vec<ParsedPuzzleItem> =
+                rows.par_drain(..).filter_map(|r| r.process()).collect();
             pb.inc(chunk_results.len() as u64);
             parsed_items.extend(chunk_results);
         }
@@ -229,7 +227,10 @@ impl ColumnarDbBuilder {
             .has_headers(true)
             .from_reader(reader);
 
-        println!("Streaming and processing CSV rows from {:?}...", zst_path.as_ref());
+        println!(
+            "Streaming and processing CSV rows from {:?}...",
+            zst_path.as_ref()
+        );
         let pb = ProgressBar::new_spinner();
         pb.set_style(
             ProgressStyle::default_spinner()
@@ -242,29 +243,38 @@ impl ColumnarDbBuilder {
         let mut count = 0;
 
         for result in csv_reader.records() {
-            let record = result.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+            let record =
+                result.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
             // Schema: 0:PuzzleId, 1:FEN, 2:Moves, 3:Rating, 4:RatingDeviation, 5:Popularity, 6:NbPlays, 7:Themes, 8:GameUrl, 9:OpeningTags
             if record.len() >= 8 {
                 let rating = record[3].parse::<u16>().unwrap_or(1500);
 
                 // Rating filtering
                 if let Some(min_r) = options.min_rating {
-                    if rating < min_r { continue; }
+                    if rating < min_r {
+                        continue;
+                    }
                 }
                 if let Some(max_r) = options.max_rating {
-                    if rating > max_r { continue; }
+                    if rating > max_r {
+                        continue;
+                    }
                 }
 
                 // Popularity filtering
                 if let Some(min_pop) = options.min_popularity {
                     let pop = record[5].parse::<i8>().unwrap_or(0);
-                    if pop < min_pop { continue; }
+                    if pop < min_pop {
+                        continue;
+                    }
                 }
 
                 // Play count filtering
                 if let Some(min_p) = options.min_plays {
                     let plays = record[6].parse::<u32>().unwrap_or(0);
-                    if plays < min_p { continue; }
+                    if plays < min_p {
+                        continue;
+                    }
                 }
 
                 let id = record[0].to_string();
@@ -282,10 +292,8 @@ impl ColumnarDbBuilder {
                 count += 1;
 
                 if rows.len() >= 50_000 {
-                    let chunk_results: Vec<ParsedPuzzleItem> = rows
-                        .par_drain(..)
-                        .filter_map(|r| r.process())
-                        .collect();
+                    let chunk_results: Vec<ParsedPuzzleItem> =
+                        rows.par_drain(..).filter_map(|r| r.process()).collect();
                     pb.inc(chunk_results.len() as u64);
                     parsed_items.extend(chunk_results);
                 }
@@ -299,10 +307,8 @@ impl ColumnarDbBuilder {
         }
 
         if !rows.is_empty() {
-            let chunk_results: Vec<ParsedPuzzleItem> = rows
-                .par_drain(..)
-                .filter_map(|r| r.process())
-                .collect();
+            let chunk_results: Vec<ParsedPuzzleItem> =
+                rows.par_drain(..).filter_map(|r| r.process()).collect();
             pb.inc(chunk_results.len() as u64);
             parsed_items.extend(chunk_results);
         }
@@ -338,7 +344,10 @@ impl ColumnarDbBuilder {
         }
 
         let unique_themes = theme_dict.len();
-        println!("Deduplicated Theme Dictionary: {} unique theme combinations", unique_themes);
+        println!(
+            "Deduplicated Theme Dictionary: {} unique theme combinations",
+            unique_themes
+        );
 
         let chunk_size = options.block_size;
         let num_blocks = (total_puzzles + chunk_size - 1) / chunk_size;
@@ -349,10 +358,8 @@ impl ColumnarDbBuilder {
             num_blocks, chunk_size, comp_level
         );
 
-        let chunks: Vec<Vec<ParsedPuzzleItem>> = items
-            .chunks(chunk_size)
-            .map(|c| c.to_vec())
-            .collect();
+        let chunks: Vec<Vec<ParsedPuzzleItem>> =
+            items.chunks(chunk_size).map(|c| c.to_vec()).collect();
 
         struct CompressedColumnarBlock {
             entry: BlockEntryV4,

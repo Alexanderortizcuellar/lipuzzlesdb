@@ -8,11 +8,11 @@
 //! - theme_rating_packed: u32 (4 bytes: bits 0..19 theme_id, bits 20..31 rating)
 //! - fen_packed: u32 (4 bytes: bits 0..15 fen_state, bits 16..23 halfmove, bits 24..31 reserved)
 
-use bytemuck::{Pod, Zeroable};
 use crate::board::CompactBoard;
 use crate::id::{decode_base62_id, encode_base62_id};
 use crate::moves::PackedMove;
 use crate::theme::ThemeMask;
+use bytemuck::{Pod, Zeroable};
 
 #[repr(C, align(8))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
@@ -130,10 +130,18 @@ impl PuzzleRecord {
         if castling == 0 {
             fen.push('-');
         } else {
-            if (castling & (1 << 0)) != 0 { fen.push('K'); }
-            if (castling & (1 << 1)) != 0 { fen.push('Q'); }
-            if (castling & (1 << 2)) != 0 { fen.push('k'); }
-            if (castling & (1 << 3)) != 0 { fen.push('q'); }
+            if (castling & (1 << 0)) != 0 {
+                fen.push('K');
+            }
+            if (castling & (1 << 1)) != 0 {
+                fen.push('Q');
+            }
+            if (castling & (1 << 2)) != 0 {
+                fen.push('k');
+            }
+            if (castling & (1 << 3)) != 0 {
+                fen.push('q');
+            }
         }
 
         // En-passant

@@ -92,7 +92,10 @@ impl DbBuilder {
         println!("Processing {} puzzles from SQLite...", total_count);
 
         let query = match limit {
-            Some(lim) => format!("SELECT PuzzleId, FEN, Moves, Rating, Themes FROM puzzles LIMIT {}", lim),
+            Some(lim) => format!(
+                "SELECT PuzzleId, FEN, Moves, Rating, Themes FROM puzzles LIMIT {}",
+                lim
+            ),
             None => "SELECT PuzzleId, FEN, Moves, Rating, Themes FROM puzzles".to_string(),
         };
 
@@ -127,10 +130,8 @@ impl DbBuilder {
             if let Ok(row) = row_res {
                 rows.push(row);
                 if rows.len() >= 50_000 {
-                    let chunk_results: Vec<ParsedItem> = rows
-                        .par_drain(..)
-                        .filter_map(|r| r.process())
-                        .collect();
+                    let chunk_results: Vec<ParsedItem> =
+                        rows.par_drain(..).filter_map(|r| r.process()).collect();
                     pb.inc(chunk_results.len() as u64);
                     parsed_items.extend(chunk_results);
                 }
@@ -138,10 +139,8 @@ impl DbBuilder {
         }
 
         if !rows.is_empty() {
-            let chunk_results: Vec<ParsedItem> = rows
-                .par_drain(..)
-                .filter_map(|r| r.process())
-                .collect();
+            let chunk_results: Vec<ParsedItem> =
+                rows.par_drain(..).filter_map(|r| r.process()).collect();
             pb.inc(chunk_results.len() as u64);
             parsed_items.extend(chunk_results);
         }
@@ -178,7 +177,8 @@ impl DbBuilder {
         let mut count = 0;
 
         for result in csv_reader.records() {
-            let record = result.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+            let record =
+                result.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
             if record.len() >= 8 {
                 let id = record[0].to_string();
                 let fen = record[1].to_string();
@@ -196,10 +196,8 @@ impl DbBuilder {
                 count += 1;
 
                 if rows.len() >= 50_000 {
-                    let chunk_results: Vec<ParsedItem> = rows
-                        .par_drain(..)
-                        .filter_map(|r| r.process())
-                        .collect();
+                    let chunk_results: Vec<ParsedItem> =
+                        rows.par_drain(..).filter_map(|r| r.process()).collect();
                     pb.inc(chunk_results.len() as u64);
                     parsed_items.extend(chunk_results);
                 }
@@ -213,10 +211,8 @@ impl DbBuilder {
         }
 
         if !rows.is_empty() {
-            let chunk_results: Vec<ParsedItem> = rows
-                .par_drain(..)
-                .filter_map(|r| r.process())
-                .collect();
+            let chunk_results: Vec<ParsedItem> =
+                rows.par_drain(..).filter_map(|r| r.process()).collect();
             pb.inc(chunk_results.len() as u64);
             parsed_items.extend(chunk_results);
         }

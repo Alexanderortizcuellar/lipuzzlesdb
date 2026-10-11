@@ -1,12 +1,12 @@
 //! Memory-mapped zero-copy database reader and query engine (V2 format).
 
-use std::fs::File;
-use std::io;
-use std::path::Path;
 use bytemuck::{Pod, Zeroable};
 use memmap2::Mmap;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::io;
+use std::path::Path;
 
 use crate::id::encode_base62_id;
 use crate::moves::PackedMove;
@@ -53,7 +53,6 @@ pub struct QueryCriteria {
     pub excluded_themes: Option<ThemeMask>,
 }
 
-
 pub struct PuzzleDatabase {
     _mmap: Mmap,
     header: DbHeader,
@@ -90,40 +89,58 @@ impl PuzzleDatabase {
         if header.version != LPDB_VERSION {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Unsupported LPDB version: {} (expected {})", header.version, LPDB_VERSION),
+                format!(
+                    "Unsupported LPDB version: {} (expected {})",
+                    header.version, LPDB_VERSION
+                ),
             ));
         }
 
         // 1. Theme Dictionary
         let theme_dict_start = header.theme_dict_offset as usize;
-        let theme_dict_bytes_len = (header.theme_dict_count as usize) * std::mem::size_of::<ThemeMask>();
+        let theme_dict_bytes_len =
+            (header.theme_dict_count as usize) * std::mem::size_of::<ThemeMask>();
         let theme_dict_end = theme_dict_start + theme_dict_bytes_len;
 
         if theme_dict_end > mmap.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Theme dictionary section exceeds file size"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Theme dictionary section exceeds file size",
+            ));
         }
 
         // 2. Records
         let records_start = header.records_offset as usize;
-        let records_bytes_len = (header.puzzle_count as usize) * std::mem::size_of::<PuzzleRecord>();
+        let records_bytes_len =
+            (header.puzzle_count as usize) * std::mem::size_of::<PuzzleRecord>();
         let records_end = records_start + records_bytes_len;
 
         if records_end > mmap.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Records section exceeds file size"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Records section exceeds file size",
+            ));
         }
 
         // 3. Move Pool
         let move_pool_start = header.move_pool_offset as usize;
-        let move_pool_bytes_len = (header.move_pool_count as usize) * std::mem::size_of::<PackedMove>();
+        let move_pool_bytes_len =
+            (header.move_pool_count as usize) * std::mem::size_of::<PackedMove>();
         let move_pool_end = move_pool_start + move_pool_bytes_len;
 
         if move_pool_end > mmap.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Move pool section exceeds file size"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Move pool section exceeds file size",
+            ));
         }
 
-        let theme_dict_slice: &[ThemeMask] = bytemuck::cast_slice(&mmap[theme_dict_start..theme_dict_end]);
-        let records_slice: &[PuzzleRecord] = bytemuck::cast_slice(&mmap[records_start..records_end]);
-        let move_pool_slice: &[PackedMove] = bytemuck::cast_slice(&mmap[move_pool_start..move_pool_end]);
+        let theme_dict_slice: &[ThemeMask] =
+            bytemuck::cast_slice(&mmap[theme_dict_start..theme_dict_end]);
+        let records_slice: &[PuzzleRecord] =
+            bytemuck::cast_slice(&mmap[records_start..records_end]);
+        let move_pool_slice: &[PackedMove] =
+            bytemuck::cast_slice(&mmap[move_pool_start..move_pool_end]);
 
         let theme_dict: &'static [ThemeMask] = unsafe { std::mem::transmute(theme_dict_slice) };
         let records: &'static [PuzzleRecord] = unsafe { std::mem::transmute(records_slice) };
@@ -175,7 +192,11 @@ impl PuzzleDatabase {
         let moves = moves_packed.iter().map(|m| m.to_uci()).collect();
         let t_id = record.theme_id() as usize;
         let themes = if t_id < self.theme_dict.len() {
-            self.theme_dict[t_id].to_theme_names().into_iter().map(String::from).collect()
+            self.theme_dict[t_id]
+                .to_theme_names()
+                .into_iter()
+                .map(String::from)
+                .collect()
         } else {
             Vec::new()
         };
@@ -217,7 +238,10 @@ impl PuzzleDatabase {
     }
 
     /// Filters puzzles matching criteria.
-    pub fn filter<'a>(&'a self, criteria: &'a QueryCriteria) -> impl Iterator<Item = &'a PuzzleRecord> + 'a {
+    pub fn filter<'a>(
+        &'a self,
+        criteria: &'a QueryCriteria,
+    ) -> impl Iterator<Item = &'a PuzzleRecord> + 'a {
         let base_slice = match (criteria.min_rating, criteria.max_rating) {
             (Some(min_r), Some(max_r)) => self.rating_range(min_r, max_r),
             (Some(min_r), None) => self.rating_range(min_r, u16::MAX),
@@ -245,7 +269,6 @@ impl PuzzleDatabase {
         })
     }
 
-
     /// Selects a random puzzle matching criteria.
     pub fn random_puzzle<R: Rng>(&self, criteria: &QueryCriteria, rng: &mut R) -> Option<Puzzle> {
         let matching: Vec<&PuzzleRecord> = self.filter(criteria).collect();
@@ -257,7 +280,11 @@ impl PuzzleDatabase {
         let moves = moves_packed.iter().map(|m| m.to_uci()).collect();
         let t_id = chosen.theme_id() as usize;
         let themes = if t_id < self.theme_dict.len() {
-            self.theme_dict[t_id].to_theme_names().into_iter().map(String::from).collect()
+            self.theme_dict[t_id]
+                .to_theme_names()
+                .into_iter()
+                .map(String::from)
+                .collect()
         } else {
             Vec::new()
         };
@@ -280,7 +307,11 @@ impl PuzzleDatabase {
                 let moves = moves_packed.iter().map(|m| m.to_uci()).collect();
                 let t_id = r.theme_id() as usize;
                 let themes = if t_id < self.theme_dict.len() {
-                    self.theme_dict[t_id].to_theme_names().into_iter().map(String::from).collect()
+                    self.theme_dict[t_id]
+                        .to_theme_names()
+                        .into_iter()
+                        .map(String::from)
+                        .collect()
                 } else {
                     Vec::new()
                 };
@@ -295,4 +326,3 @@ impl PuzzleDatabase {
             .collect()
     }
 }
-

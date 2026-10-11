@@ -39,7 +39,9 @@ pub fn download_lichess_puzzle_db(
         let p = ProgressBar::new_spinner();
         p.set_style(
             ProgressStyle::default_spinner()
-                .template("{spinner:.green} [{elapsed_precise}] {bytes} downloaded ({bytes_per_sec})")
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] {bytes} downloaded ({bytes_per_sec})",
+                )
                 .unwrap(),
         );
         p

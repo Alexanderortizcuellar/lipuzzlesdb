@@ -9,7 +9,9 @@ use std::time::Instant;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 
-use crate::block_db::{BlockEntry, BlockPuzzleRecord, DbHeaderV3, DEFAULT_BLOCK_SIZE, LPDB_MAGIC, LPDB_VERSION_V3};
+use crate::block_db::{
+    BlockEntry, BlockPuzzleRecord, DbHeaderV3, DEFAULT_BLOCK_SIZE, LPDB_MAGIC, LPDB_VERSION_V3,
+};
 use crate::board::CompactBoard;
 use crate::fen::PackedFen;
 use crate::id::encode_base62_id;
@@ -92,7 +94,10 @@ impl BlockDbBuilder {
         println!("Processing {} puzzles from SQLite...", total_count);
 
         let query = match limit {
-            Some(lim) => format!("SELECT PuzzleId, FEN, Moves, Rating, Themes FROM puzzles LIMIT {}", lim),
+            Some(lim) => format!(
+                "SELECT PuzzleId, FEN, Moves, Rating, Themes FROM puzzles LIMIT {}",
+                lim
+            ),
             None => "SELECT PuzzleId, FEN, Moves, Rating, Themes FROM puzzles".to_string(),
         };
 
@@ -127,10 +132,8 @@ impl BlockDbBuilder {
             if let Ok(row) = row_res {
                 rows.push(row);
                 if rows.len() >= 50_000 {
-                    let chunk_results: Vec<ParsedItem> = rows
-                        .par_drain(..)
-                        .filter_map(|r| r.process())
-                        .collect();
+                    let chunk_results: Vec<ParsedItem> =
+                        rows.par_drain(..).filter_map(|r| r.process()).collect();
                     pb.inc(chunk_results.len() as u64);
                     parsed_items.extend(chunk_results);
                 }
@@ -138,10 +141,8 @@ impl BlockDbBuilder {
         }
 
         if !rows.is_empty() {
-            let chunk_results: Vec<ParsedItem> = rows
-                .par_drain(..)
-                .filter_map(|r| r.process())
-                .collect();
+            let chunk_results: Vec<ParsedItem> =
+                rows.par_drain(..).filter_map(|r| r.process()).collect();
             pb.inc(chunk_results.len() as u64);
             parsed_items.extend(chunk_results);
         }
@@ -183,10 +184,7 @@ impl BlockDbBuilder {
         let num_blocks = (total_puzzles + chunk_size - 1) / chunk_size;
 
         // Group items into chunks
-        let chunks: Vec<Vec<ParsedItem>> = items
-            .chunks(chunk_size)
-            .map(|c| c.to_vec())
-            .collect();
+        let chunks: Vec<Vec<ParsedItem>> = items.chunks(chunk_size).map(|c| c.to_vec()).collect();
 
         struct CompressedBlockResult {
             entry: BlockEntry,

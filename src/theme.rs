@@ -217,6 +217,9 @@ mod tests {
         // "1 2 3 4" => crushing, hangingPiece, long, middlegame
         let mask = ThemeMask::from_sqlite_ids_str("1 2 3 4");
         let names = mask.to_theme_names();
-        assert_eq!(names, vec!["crushing", "hangingPiece", "long", "middlegame"]);
+        assert_eq!(
+            names,
+            vec!["crushing", "hangingPiece", "long", "middlegame"]
+        );
     }
 }

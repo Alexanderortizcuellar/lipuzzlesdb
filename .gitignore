@@ -5,9 +5,13 @@ Cargo.lock
 # Large binary database files
 *.lpdb
 !sample_puzzles.lpdb
+*.lgdb
+data/
 
 # Export files and dataset dumps
 *.pgn
+*.idx
+*.json
 
 # Source/raw datasets and temporary downloads
 *.db
@@ -19,6 +23,10 @@ Cargo.lock
 *.zip
 *.7z
 *.tar.gz
+
+# Python cache
+__pycache__/
+*.pyc
 
 # IDE and OS files
 .DS_Store

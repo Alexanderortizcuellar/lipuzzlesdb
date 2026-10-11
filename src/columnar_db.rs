@@ -3,13 +3,13 @@
 //! Provides ultra-compact columnar layout with adaptive fallback mechanisms,
 //! delta-encoded ratings, contiguous piece and move streams, and fast LRU block caching.
 
+use bytemuck::{Pod, Zeroable};
+use memmap2::Mmap;
+use rand::Rng;
 use std::fs::File;
 use std::io::{self, Cursor, Read};
 use std::path::Path;
 use std::sync::Mutex;
-use bytemuck::{Pod, Zeroable};
-use memmap2::Mmap;
-use rand::Rng;
 
 use crate::board::CompactBoard;
 use crate::id::decode_base62_id;
@@ -201,7 +201,11 @@ impl DecompressedColumnarBlock {
     }
 
     /// Reconstructs a full decoded Puzzle struct for a given index in this block.
-    pub fn get_puzzle(&self, index_in_block: usize, theme_dict: &[ThemeMask]) -> Option<crate::db::Puzzle> {
+    pub fn get_puzzle(
+        &self,
+        index_in_block: usize,
+        theme_dict: &[ThemeMask],
+    ) -> Option<crate::db::Puzzle> {
         if index_in_block >= self.puzzle_count {
             return None;
         }
@@ -209,7 +213,10 @@ impl DecompressedColumnarBlock {
         let raw_id = self.ids[index_in_block];
         let id = if (raw_id & 0x8000_0000) != 0 {
             let overflow_idx = (raw_id & 0x7FFF_FFFF) as usize;
-            self.overflow_ids.get(overflow_idx).cloned().unwrap_or_default()
+            self.overflow_ids
+                .get(overflow_idx)
+                .cloned()
+                .unwrap_or_default()
         } else {
             decode_base62_id(raw_id)
         };
@@ -246,10 +253,18 @@ impl DecompressedColumnarBlock {
         if castling == 0 {
             fen.push('-');
         } else {
-            if (castling & (1 << 0)) != 0 { fen.push('K'); }
-            if (castling & (1 << 1)) != 0 { fen.push('Q'); }
-            if (castling & (1 << 2)) != 0 { fen.push('k'); }
-            if (castling & (1 << 3)) != 0 { fen.push('q'); }
+            if (castling & (1 << 0)) != 0 {
+                fen.push('K');
+            }
+            if (castling & (1 << 1)) != 0 {
+                fen.push('Q');
+            }
+            if (castling & (1 << 2)) != 0 {
+                fen.push('k');
+            }
+            if (castling & (1 << 3)) != 0 {
+                fen.push('q');
+            }
         }
 
         fen.push(' ');
@@ -270,10 +285,17 @@ impl DecompressedColumnarBlock {
         fen.push_str(&fen_halfmove.to_string());
         fen.push_str(" 1");
 
-        let moves = self.move_streams[index_in_block].iter().map(|m| m.to_uci()).collect();
+        let moves = self.move_streams[index_in_block]
+            .iter()
+            .map(|m| m.to_uci())
+            .collect();
 
         let themes = if t_id < theme_dict.len() {
-            theme_dict[t_id].to_theme_names().into_iter().map(String::from).collect()
+            theme_dict[t_id]
+                .to_theme_names()
+                .into_iter()
+                .map(String::from)
+                .collect()
         } else {
             Vec::new()
         };
@@ -338,33 +360,45 @@ impl ColumnarDb {
         let mmap = unsafe { Mmap::map(&file)? };
 
         if mmap.len() < std::mem::size_of::<DbHeaderV4>() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "File too small for V4 header"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "File too small for V4 header",
+            ));
         }
 
         let header: DbHeaderV4 = *bytemuck::from_bytes(&mmap[..std::mem::size_of::<DbHeaderV4>()]);
 
         if &header.magic != LPDB_MAGIC {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid LPDB magic"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid LPDB magic",
+            ));
         }
 
         if header.version != LPDB_VERSION_V4 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Unsupported LPDB version: {} (expected {})", header.version, LPDB_VERSION_V4),
+                format!(
+                    "Unsupported LPDB version: {} (expected {})",
+                    header.version, LPDB_VERSION_V4
+                ),
             ));
         }
 
         // Theme Dictionary
         let theme_dict_start = header.theme_dict_offset as usize;
         let theme_dict_len = (header.theme_dict_count as usize) * std::mem::size_of::<ThemeMask>();
-        let theme_dict_slice: &[ThemeMask] = bytemuck::cast_slice(&mmap[theme_dict_start..theme_dict_start + theme_dict_len]);
+        let theme_dict_slice: &[ThemeMask] =
+            bytemuck::cast_slice(&mmap[theme_dict_start..theme_dict_start + theme_dict_len]);
         let theme_dict: &'static [ThemeMask] = unsafe { std::mem::transmute(theme_dict_slice) };
 
         // Block Index
         let block_index_start = header.block_index_offset as usize;
         let block_index_len = (header.block_count as usize) * std::mem::size_of::<BlockEntryV4>();
-        let block_index_slice: &[BlockEntryV4] = bytemuck::cast_slice(&mmap[block_index_start..block_index_start + block_index_len]);
-        let block_index: &'static [BlockEntryV4] = unsafe { std::mem::transmute(block_index_slice) };
+        let block_index_slice: &[BlockEntryV4] =
+            bytemuck::cast_slice(&mmap[block_index_start..block_index_start + block_index_len]);
+        let block_index: &'static [BlockEntryV4] =
+            unsafe { std::mem::transmute(block_index_slice) };
 
         Ok(Self {
             mmap,
@@ -403,7 +437,10 @@ impl ColumnarDb {
     /// Decompresses and returns the block for the given block index.
     pub fn get_block(&self, block_idx: usize) -> io::Result<DecompressedColumnarBlock> {
         if block_idx >= self.block_index.len() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Block index out of bounds"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Block index out of bounds",
+            ));
         }
 
         let entry = &self.block_index[block_idx];
@@ -415,7 +452,10 @@ impl ColumnarDb {
         let decompressed_bytes = zstd::decode_all(compressed_bytes)?;
 
         if decompressed_bytes.len() != uncomp_size {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Decompressed size mismatch"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Decompressed size mismatch",
+            ));
         }
 
         DecompressedColumnarBlock::decode_from_bytes(block_idx, &decompressed_bytes)
@@ -460,7 +500,11 @@ impl ColumnarDb {
     }
 
     /// Picks a random puzzle matching criteria.
-    pub fn random_puzzle<R: Rng>(&self, criteria: &crate::db::QueryCriteria, rng: &mut R) -> Option<crate::db::Puzzle> {
+    pub fn random_puzzle<R: Rng>(
+        &self,
+        criteria: &crate::db::QueryCriteria,
+        rng: &mut R,
+    ) -> Option<crate::db::Puzzle> {
         let min_r = criteria.min_rating.unwrap_or(self.header.min_rating);
         let max_r = criteria.max_rating.unwrap_or(self.header.max_rating);
 
@@ -488,7 +532,11 @@ impl ColumnarDb {
                     let r = block.ratings[i];
                     if r >= min_r && r <= max_r {
                         let t_id = block.theme_ids[i] as usize;
-                        let mask = if t_id < self.theme_dict.len() { self.theme_dict[t_id] } else { ThemeMask::EMPTY };
+                        let mask = if t_id < self.theme_dict.len() {
+                            self.theme_dict[t_id]
+                        } else {
+                            ThemeMask::EMPTY
+                        };
 
                         if let Some(req) = criteria.required_themes {
                             if !mask.contains_all(req) {
@@ -506,7 +554,6 @@ impl ColumnarDb {
                             }
                         }
                         matching_in_block.push(i);
-
                     }
                 }
 
@@ -521,7 +568,11 @@ impl ColumnarDb {
     }
 
     /// Queries puzzles matching criteria up to a given limit.
-    pub fn query_puzzles(&self, criteria: &crate::db::QueryCriteria, limit: usize) -> Vec<crate::db::Puzzle> {
+    pub fn query_puzzles(
+        &self,
+        criteria: &crate::db::QueryCriteria,
+        limit: usize,
+    ) -> Vec<crate::db::Puzzle> {
         let min_r = criteria.min_rating.unwrap_or(self.header.min_rating);
         let max_r = criteria.max_rating.unwrap_or(self.header.max_rating);
 
@@ -540,7 +591,11 @@ impl ColumnarDb {
                     let r = block.ratings[i];
                     if r >= min_r && r <= max_r {
                         let t_id = block.theme_ids[i] as usize;
-                        let mask = if t_id < self.theme_dict.len() { self.theme_dict[t_id] } else { ThemeMask::EMPTY };
+                        let mask = if t_id < self.theme_dict.len() {
+                            self.theme_dict[t_id]
+                        } else {
+                            ThemeMask::EMPTY
+                        };
 
                         if let Some(req) = criteria.required_themes {
                             if !mask.contains_all(req) {
@@ -558,7 +613,6 @@ impl ColumnarDb {
                             }
                         }
 
-
                         if let Some(p) = block.get_puzzle(i, self.theme_dict) {
                             results.push(p);
                             if results.len() >= limit {
@@ -573,4 +627,3 @@ impl ColumnarDb {
         results
     }
 }
-

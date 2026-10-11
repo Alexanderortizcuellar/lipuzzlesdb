@@ -6,17 +6,17 @@
 //! - Block index table for O(1) seekable random access.
 //! - Fast LRU / slot cache for sub-microsecond repeated queries.
 
-use std::fs::File;
-use std::io::{self, Cursor, Read};
-use std::path::Path;
-use std::sync::Mutex;
-use bytemuck::{Pod, Zeroable};
-use memmap2::Mmap;
-use rand::Rng;
 use crate::board::CompactBoard;
 use crate::id::decode_base62_id;
 use crate::moves::PackedMove;
 use crate::theme::ThemeMask;
+use bytemuck::{Pod, Zeroable};
+use memmap2::Mmap;
+use rand::Rng;
+use std::fs::File;
+use std::io::{self, Cursor, Read};
+use std::path::Path;
+use std::sync::Mutex;
 
 pub const LPDB_MAGIC: &[u8; 4] = b"LPDB";
 pub const LPDB_VERSION_V3: u32 = 3;
@@ -102,10 +102,18 @@ impl BlockPuzzleRecord {
         if castling == 0 {
             fen.push('-');
         } else {
-            if (castling & (1 << 0)) != 0 { fen.push('K'); }
-            if (castling & (1 << 1)) != 0 { fen.push('Q'); }
-            if (castling & (1 << 2)) != 0 { fen.push('k'); }
-            if (castling & (1 << 3)) != 0 { fen.push('q'); }
+            if (castling & (1 << 0)) != 0 {
+                fen.push('K');
+            }
+            if (castling & (1 << 1)) != 0 {
+                fen.push('Q');
+            }
+            if (castling & (1 << 2)) != 0 {
+                fen.push('k');
+            }
+            if (castling & (1 << 3)) != 0 {
+                fen.push('q');
+            }
         }
 
         fen.push(' ');
@@ -161,19 +169,27 @@ impl DecompressedBlock {
         let records_bytes_len = puzzle_count * std::mem::size_of::<BlockPuzzleRecord>();
         let pos = cursor.position() as usize;
         if pos + records_bytes_len > data.len() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Block records overflow"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Block records overflow",
+            ));
         }
 
-        let records_slice: &[BlockPuzzleRecord] = bytemuck::cast_slice(&data[pos..pos + records_bytes_len]);
+        let records_slice: &[BlockPuzzleRecord] =
+            bytemuck::cast_slice(&data[pos..pos + records_bytes_len]);
         let records = records_slice.to_vec();
 
         let moves_pos = pos + records_bytes_len;
         let moves_bytes_len = move_count * std::mem::size_of::<PackedMove>();
         if moves_pos + moves_bytes_len > data.len() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Block moves overflow"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Block moves overflow",
+            ));
         }
 
-        let moves_slice: &[PackedMove] = bytemuck::cast_slice(&data[moves_pos..moves_pos + moves_bytes_len]);
+        let moves_slice: &[PackedMove] =
+            bytemuck::cast_slice(&data[moves_pos..moves_pos + moves_bytes_len]);
         let moves = moves_slice.to_vec();
 
         Ok(Self {
@@ -202,32 +218,43 @@ impl BlockCompressedDb {
         let mmap = unsafe { Mmap::map(&file)? };
 
         if mmap.len() < std::mem::size_of::<DbHeaderV3>() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "File too small for V3 header"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "File too small for V3 header",
+            ));
         }
 
         let header: DbHeaderV3 = *bytemuck::from_bytes(&mmap[..std::mem::size_of::<DbHeaderV3>()]);
 
         if &header.magic != LPDB_MAGIC {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid LPDB magic"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid LPDB magic",
+            ));
         }
 
         if header.version != LPDB_VERSION_V3 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Unsupported LPDB version: {} (expected {})", header.version, LPDB_VERSION_V3),
+                format!(
+                    "Unsupported LPDB version: {} (expected {})",
+                    header.version, LPDB_VERSION_V3
+                ),
             ));
         }
 
         // Theme Dictionary
         let theme_dict_start = header.theme_dict_offset as usize;
         let theme_dict_len = (header.theme_dict_count as usize) * std::mem::size_of::<ThemeMask>();
-        let theme_dict_slice: &[ThemeMask] = bytemuck::cast_slice(&mmap[theme_dict_start..theme_dict_start + theme_dict_len]);
+        let theme_dict_slice: &[ThemeMask] =
+            bytemuck::cast_slice(&mmap[theme_dict_start..theme_dict_start + theme_dict_len]);
         let theme_dict: &'static [ThemeMask] = unsafe { std::mem::transmute(theme_dict_slice) };
 
         // Block Index
         let block_index_start = header.block_index_offset as usize;
         let block_index_len = (header.block_count as usize) * std::mem::size_of::<BlockEntry>();
-        let block_index_slice: &[BlockEntry] = bytemuck::cast_slice(&mmap[block_index_start..block_index_start + block_index_len]);
+        let block_index_slice: &[BlockEntry] =
+            bytemuck::cast_slice(&mmap[block_index_start..block_index_start + block_index_len]);
         let block_index: &'static [BlockEntry] = unsafe { std::mem::transmute(block_index_slice) };
 
         Ok(Self {
@@ -262,7 +289,10 @@ impl BlockCompressedDb {
     /// Decompresses and returns the block for the given block index.
     pub fn get_block(&self, block_idx: usize) -> io::Result<DecompressedBlock> {
         if block_idx >= self.block_index.len() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Block index out of bounds"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Block index out of bounds",
+            ));
         }
 
         let entry = &self.block_index[block_idx];
@@ -274,7 +304,10 @@ impl BlockCompressedDb {
         let decompressed_bytes = zstd::decode_all(compressed_bytes)?;
 
         if decompressed_bytes.len() != uncomp_size {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Decompressed size mismatch"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Decompressed size mismatch",
+            ));
         }
 
         DecompressedBlock::decode_from_bytes(block_idx, &decompressed_bytes)
@@ -300,11 +333,19 @@ impl BlockCompressedDb {
 
         let block = cache.as_ref().unwrap();
         let record = block.records.get(offset_in_block)?;
-        let moves = record.get_moves(&block.moves).iter().map(|m| m.to_uci()).collect();
+        let moves = record
+            .get_moves(&block.moves)
+            .iter()
+            .map(|m| m.to_uci())
+            .collect();
 
         let t_id = record.theme_id as usize;
         let themes = if t_id < self.theme_dict.len() {
-            self.theme_dict[t_id].to_theme_names().into_iter().map(String::from).collect()
+            self.theme_dict[t_id]
+                .to_theme_names()
+                .into_iter()
+                .map(String::from)
+                .collect()
         } else {
             Vec::new()
         };
@@ -319,7 +360,11 @@ impl BlockCompressedDb {
     }
 
     /// Picks a random puzzle matching rating and theme criteria.
-    pub fn random_puzzle<R: Rng>(&self, criteria: &crate::db::QueryCriteria, rng: &mut R) -> Option<crate::db::Puzzle> {
+    pub fn random_puzzle<R: Rng>(
+        &self,
+        criteria: &crate::db::QueryCriteria,
+        rng: &mut R,
+    ) -> Option<crate::db::Puzzle> {
         let min_r = criteria.min_rating.unwrap_or(self.header.min_rating);
         let max_r = criteria.max_rating.unwrap_or(self.header.max_rating);
 
@@ -348,7 +393,11 @@ impl BlockCompressedDb {
                 for (i, r) in block.records.iter().enumerate() {
                     if r.rating >= min_r && r.rating <= max_r {
                         let t_id = r.theme_id as usize;
-                        let mask = if t_id < self.theme_dict.len() { self.theme_dict[t_id] } else { ThemeMask::EMPTY };
+                        let mask = if t_id < self.theme_dict.len() {
+                            self.theme_dict[t_id]
+                        } else {
+                            ThemeMask::EMPTY
+                        };
 
                         if let Some(req) = criteria.required_themes {
                             if !mask.contains_all(req) {
@@ -366,17 +415,24 @@ impl BlockCompressedDb {
                             }
                         }
                         matching_in_block.push(i);
-
                     }
                 }
 
                 if !matching_in_block.is_empty() {
                     let chosen_idx = matching_in_block[rng.gen_range(0..matching_in_block.len())];
                     let r = &block.records[chosen_idx];
-                    let moves = r.get_moves(&block.moves).iter().map(|m| m.to_uci()).collect();
+                    let moves = r
+                        .get_moves(&block.moves)
+                        .iter()
+                        .map(|m| m.to_uci())
+                        .collect();
                     let t_id = r.theme_id as usize;
                     let themes = if t_id < self.theme_dict.len() {
-                        self.theme_dict[t_id].to_theme_names().into_iter().map(String::from).collect()
+                        self.theme_dict[t_id]
+                            .to_theme_names()
+                            .into_iter()
+                            .map(String::from)
+                            .collect()
                     } else {
                         Vec::new()
                     };
@@ -396,7 +452,11 @@ impl BlockCompressedDb {
     }
 
     /// Queries puzzles matching criteria up to a given limit.
-    pub fn query_puzzles(&self, criteria: &crate::db::QueryCriteria, limit: usize) -> Vec<crate::db::Puzzle> {
+    pub fn query_puzzles(
+        &self,
+        criteria: &crate::db::QueryCriteria,
+        limit: usize,
+    ) -> Vec<crate::db::Puzzle> {
         let min_r = criteria.min_rating.unwrap_or(self.header.min_rating);
         let max_r = criteria.max_rating.unwrap_or(self.header.max_rating);
 
@@ -411,10 +471,14 @@ impl BlockCompressedDb {
 
         for block_idx in start_block..end_block.min(self.block_index.len()) {
             if let Ok(block) = self.get_block(block_idx) {
-                for (i, r) in block.records.iter().enumerate() {
+                for (_i, r) in block.records.iter().enumerate() {
                     if r.rating >= min_r && r.rating <= max_r {
                         let t_id = r.theme_id as usize;
-                        let mask = if t_id < self.theme_dict.len() { self.theme_dict[t_id] } else { ThemeMask::EMPTY };
+                        let mask = if t_id < self.theme_dict.len() {
+                            self.theme_dict[t_id]
+                        } else {
+                            ThemeMask::EMPTY
+                        };
 
                         if let Some(req) = criteria.required_themes {
                             if !mask.contains_all(req) {
@@ -432,10 +496,17 @@ impl BlockCompressedDb {
                             }
                         }
 
-
-                        let moves = r.get_moves(&block.moves).iter().map(|m| m.to_uci()).collect();
+                        let moves = r
+                            .get_moves(&block.moves)
+                            .iter()
+                            .map(|m| m.to_uci())
+                            .collect();
                         let themes = if t_id < self.theme_dict.len() {
-                            self.theme_dict[t_id].to_theme_names().into_iter().map(String::from).collect()
+                            self.theme_dict[t_id]
+                                .to_theme_names()
+                                .into_iter()
+                                .map(String::from)
+                                .collect()
                         } else {
                             Vec::new()
                         };
@@ -459,4 +530,3 @@ impl BlockCompressedDb {
         results
     }
 }
-

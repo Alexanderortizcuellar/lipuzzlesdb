@@ -245,10 +245,18 @@ impl PackedFen {
         if castling == 0 {
             result.push('-');
         } else {
-            if (castling & (1 << 0)) != 0 { result.push('K'); }
-            if (castling & (1 << 1)) != 0 { result.push('Q'); }
-            if (castling & (1 << 2)) != 0 { result.push('k'); }
-            if (castling & (1 << 3)) != 0 { result.push('q'); }
+            if (castling & (1 << 0)) != 0 {
+                result.push('K');
+            }
+            if (castling & (1 << 1)) != 0 {
+                result.push('Q');
+            }
+            if (castling & (1 << 2)) != 0 {
+                result.push('k');
+            }
+            if (castling & (1 << 3)) != 0 {
+                result.push('q');
+            }
         }
 
         // Decode En-passant
